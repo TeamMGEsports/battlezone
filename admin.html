@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin — BattleZone</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-inner">
+      <div class="logo">Battle<span>Zone</span> ⚙️ Admin</div>
+      <div class="nav-links"><a href="index.html">← Back to Site</a></div>
+    </div>
+  </nav>
+
+  <div class="admin-container">
+    <h2 style="margin:1.5rem 0 .5rem;font-size:1.3rem;">How to Add / Update Tournaments</h2>
+
+    <div class="alert alert-info">
+      <strong>It's super easy!</strong> Just edit the <code>js/data.js</code> file in your GitHub repo. The site updates automatically within minutes.
+    </div>
+
+    <div class="detail-section">
+      <h3>📝 Step-by-Step</h3>
+      <ul class="rules-list">
+        <li>Go to your GitHub repository</li>
+        <li>Open the file <code>js/data.js</code></li>
+        <li>Click the ✏️ pencil icon to edit</li>
+        <li>Copy one of the existing tournament blocks and paste it</li>
+        <li>Change the details (title, date, map, mode, prizes, etc.)</li>
+        <li>Click "Commit changes" at the bottom</li>
+        <li>Done! Your site updates automatically in 1-2 minutes</li>
+      </ul>
+    </div>
+
+    <div class="detail-section">
+      <h3>📋 Tournament Template (Copy & Paste)</h3>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;overflow-x:auto;">
+<pre style="color:var(--text);font-size:.8rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;margin:0"><code>{
+  id: 5,  // Change to next number
+  title: "Your Tournament Name 🏆",
+  game: "BGMI",           // "BGMI" or "PUBG"
+  mode: "Squad",          // "Solo", "Duo", or "Squad"
+  map: "Erangel",         // "Erangel", "Miramar", "Sanhok", "Vikendi", "Livik"
+  date: "2026-11-05T20:00:00+05:30",  // YYYY-MM-DDTHH:MM:SS+05:30 (IST)
+  entryFee: "Free",
+  prizePool: "₹500",
+  maxTeams: 25,
+  registeredTeams: 0,     // Update as teams register
+  perKillPrize: "₹10",
+  roomId: "",             // Add room ID before match (keep empty until ready)
+  roomPass: "",           // Add password before match
+  status: "upcoming",     // "upcoming", "live", or "completed"
+  rules: [
+    "Emulator players not allowed",
+    "Join room 5 minutes before match time",
+    "Captain must share results screenshot"
+  ],
+  pointsSystem: {
+    chickenDinner: 15,
+    secondPlace: 12,
+    thirdPlace: 10,
+    kill: 1
+  },
+  results: []  // Fill after match ends (see below)
+},</code></pre>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>🏆 Adding Results (After Match)</h3>
+      <div style="background:var(--card);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;overflow-x:auto;">
+<pre style="color:var(--text);font-size:.8rem;line-height:1.6;white-space:pre-wrap;word-break:break-all;margin:0"><code>// Change status to "completed" and fill results:
+status: "completed",
+results: [
+  { rank: 1, team: "Winner Team", kills: 14, points: 29, prize: "₹200" },
+  { rank: 2, team: "2nd Team", kills: 11, points: 23, prize: "₹120" },
+  { rank: 3, team: "3rd Team", kills: 9, points: 19, prize: "₹80" },
+  { rank: 4, team: "4th Team", kills: 7, points: 12, prize: "" },
+  { rank: 5, team: "5th Team", kills: 5, points: 8, prize: "" }
+]</code></pre>
+      </div>
+    </div>
+
+    <div class="detail-section">
+      <h3>⚙️ Site Settings</h3>
+      <p style="font-size:.85rem;color:var(--text2);margin-bottom:.5rem;">Edit the <code>SITE_CONFIG</code> section at the top of <code>js/data.js</code>:</p>
+      <ul class="rules-list">
+        <li><strong>whatsappGroup:</strong> Your WhatsApp group invite link</li>
+        <li><strong>adminContact:</strong> Your WhatsApp number with country code (919999999999)</li>
+        <li><strong>name:</strong> Change site name from "BattleZone" to yours</li>
+      </ul>
+    </div>
+
+    <div class="detail-section">
+      <h3>🚀 Going Live Checklist</h3>
+      <ul class="rules-list">
+        <li>Create a free GitHub account (if you don't have one)</li>
+        <li>Create a new repository (e.g., "battlezone")</li>
+        <li>Upload all files (index.html, css/, js/ folders)</li>
+        <li>Go to Settings → Pages → Source: "main" branch → Save</li>
+        <li>Your site is live at: <code>https://yourusername.github.io/battlezone</code></li>
+        <li>Share the link in your WhatsApp group! 🎉</li>
+      </ul>
+    </div>
+
+    <div class="alert alert-success" style="margin-top:1rem;">
+      💡 <strong>Pro Tip:</strong> Bookmark the GitHub edit link for <code>js/data.js</code>. You can update tournaments right from your phone's browser — no computer needed!
+    </div>
+  </div>
+
+  <footer class="footer">
+    <p>BattleZone Admin Panel · Not visible to players</p>
+  </footer>
+</body>
+</html>
