@@ -6,7 +6,7 @@
 const SITE_CONFIG = {
   name: "BattleZone",
   tagline: "Free BGMI & PUBG Tournaments",
-  whatsappGroup: "https://chat.whatsapp.com/YOUR_GROUP_LINK",  // Replace with your WhatsApp group invite link
+  whatsappGroup: "https://chat.whatsapp.com/HZrLR0uH3BgJH1Zapbz6yn?s=cl&p=a&iam=2",
   discordLink: "",  // Optional: add your Discord server link
   adminContact: "919999999999",  // WhatsApp number for support (with country code, no +)
   upiId: "",  // Optional: for paid tournaments later
