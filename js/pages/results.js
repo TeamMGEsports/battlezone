@@ -1,5 +1,5 @@
 import { api } from '../api.js';
-import { $, esc, initShell, dayLabel, fmtTime, MODE, resultsTable, showError } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, MODE, resultsTable, mvpLine, showError } from '../ui.js';
 
 initShell('results');
 
@@ -10,10 +10,10 @@ async function loadBoard(days) {
     const rows = await api.leaderboard(since);
     el.innerHTML = rows.length ? `
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>Team</th><th class="num hide-sm">Played</th><th class="num">Wins</th><th class="num">Kills</th><th class="num">Pts</th></tr></thead>
+        <thead><tr><th>#</th><th>Team</th><th class="num hide-sm">Played</th><th class="num">Wins</th><th class="num">MVP</th><th class="num">Kills</th><th class="num">Pts</th></tr></thead>
         <tbody>${rows.map((r, i) => `
           <tr${i === 0 ? ' class="first"' : ''}><td>${i + 1}</td><td>${esc(r.team_name)}</td>
-          <td class="num hide-sm">${r.matches}</td><td class="num">${r.wins}</td><td class="num">${r.kills}</td>
+          <td class="num hide-sm">${r.matches}</td><td class="num">${r.wins}</td><td class="num">${r.mvps ?? 0}</td><td class="num">${r.kills}</td>
           <td class="num"><strong>${r.points}</strong></td></tr>`).join('')}
         </tbody>
       </table></div>` : '<p class="empty">No results in this period yet.</p>';
@@ -44,7 +44,9 @@ try {
     d.dataset.loaded = '1';
     const body = $('.body', d);
     try {
-      body.innerHTML = resultsTable(await api.getResults(Number(d.dataset.id)));
+      const m = matches.find(x => x.id === Number(d.dataset.id));
+      const line = mvpLine(m);
+      body.innerHTML = (line ? `<div style="padding:.75rem 1rem 0">${line}</div>` : '') + resultsTable(await api.getResults(m.id));
     } catch (err) {
       showError(body, err);
     }

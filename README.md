@@ -63,6 +63,14 @@ Check the legal position for paid entry and cash prizes in India before using th
 - **Bans:** Admin → Teams → **Ban** blocks a team's WhatsApp number and BGMI IDs from all matches. Manage them in Admin → **Bans**.
 - The public team list shows only slot number and team name.
 
+## Match night
+
+- **Prizes:** set 1st, 2nd, 3rd and MVP amounts per match. The total shows on the home page, and each place's prize fills in automatically when you enter results.
+- **MVP:** in Results, pick the player with the most kills (solo matches pick it automatically). It shows on the match page, the results page and as a leaderboard column.
+- **Check-in (optional per match):** opens 60 minutes before start and closes 20 minutes before. Teams that don't check in lose their slot, and the room is only shown to checked-in teams. With check-in on, registration closes no later than check-in does.
+- **Waitlist (free matches):** when slots are full, up to 10 teams can join the waitlist. A cancelled, removed or no-show slot goes to the next team automatically, keeping the same slot number. Admins can also tap **Give slot**.
+- **WhatsApp posts:** Admin → **WhatsApp** on a match gives ready messages for registration open, check-in open, room open and results. **Post: tonight** and **Post: weekly top 10** are at the top of the matches list.
+
 ## Undoing an update
 
 Each database update in `supabase/migrations/` has a matching `_rollback.sql`. To undo one: click **Revert** on the merged pull request on GitHub, merge the revert, then run the rollback file in the Supabase SQL Editor. No match, team or result data is lost.

@@ -23,18 +23,37 @@ export function deviceId() {
   } catch { return null; }
 }
 
+// Check-in window, keep in sync with checkin_opens/closes() in 004_match_night.sql
+export const CHECKIN_OPENS_MIN = 60;
+export const CHECKIN_CLOSES_MIN = 20;
+export const WAITLIST_MAX = 10;
+
+// Minutes before start that registration closes. With check-in it closes
+// no later than check-in does (same rule as registration_open() in the database).
+export function regCloseMinutes(m) {
+  return Math.max(m.reg_close_minutes ?? 30, m.checkin_required ? CHECKIN_CLOSES_MIN : 0);
+}
+
 export function registrationOpen(m) {
-  return m.status === 'open' && Date.now() < Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3;
+  return m.status === 'open' && Date.now() < Date.parse(m.starts_at) - regCloseMinutes(m) * 60e3;
 }
 
 // ---------------------------------------------------------------
 // Supabase
 // ---------------------------------------------------------------
 
+// The pages load the single-file Supabase bundle with a deferred <script>
+// tag (much faster than many small module requests). This is a fallback.
+const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js';
 let sbPromise;
 function sb() {
-  sbPromise ||= import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm')
-    .then(({ createClient }) => createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey));
+  sbPromise ||= (window.supabase ? Promise.resolve() : new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = SUPABASE_JS;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Could not connect. Check your internet and refresh the page.'));
+    document.head.append(s);
+  })).then(() => window.supabase.createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey));
   return sbPromise;
 }
 
@@ -58,7 +77,11 @@ const remote = {
     return unwrap(await q);
   },
   async getMatch(id) {
-    return unwrap(await (await sb()).from('matches_public').select('*').eq('id', id).maybeSingle());
+    const c = await sb();
+    // Releases no-shows and fills slots from the waitlist. Not awaited: player
+    // actions settle on the server anyway, this just keeps counts fresh.
+    c.rpc('settle_match', { p_match_id: id }).then(() => {}, () => {});
+    return unwrap(await c.from('matches_public').select('*').eq('id', id).maybeSingle());
   },
   async listRegistrations(matchId) {
     return unwrap(await (await sb()).from('registrations_public')
@@ -87,6 +110,9 @@ const remote = {
   },
   async cancelRegistration(token) {
     unwrap(await (await sb()).rpc('cancel_registration', { p_token: token }));
+  },
+  async checkIn(token) {
+    unwrap(await (await sb()).rpc('check_in', { p_token: token }));
   },
   async findRegistration(matchId, phone, bgmiId) {
     return unwrap(await (await sb()).rpc('find_registration', { p_match_id: matchId, p_phone: phone, p_bgmi_id: bgmiId }));
@@ -128,6 +154,7 @@ const remote = {
     unwrap(await (await sb()).from('matches').delete().eq('id', id));
   },
   async adminRegistrations(matchId) {
+    await (await sb()).rpc('settle_match', { p_match_id: matchId });
     return unwrap(await (await sb()).from('registrations')
       .select('*, players:registration_players(ign, bgmi_id), result:results(placement, kills, points, prize)')
       .eq('match_id', matchId).order('slot_no'));
@@ -144,13 +171,16 @@ const remote = {
   async removeBan(id) {
     unwrap(await (await sb()).from('bans').delete().eq('id', id));
   },
-  async saveResults(matchId, rows) {
+  async saveResults(matchId, rows, mvp) {
     const c = await sb();
     unwrap(await c.from('results').delete().eq('match_id', matchId));
     if (rows.length) {
       unwrap(await c.from('results').insert(rows.map(r => ({ ...r, match_id: matchId }))));
     }
-    unwrap(await c.from('matches').update({ status: 'completed' }).eq('id', matchId));
+    unwrap(await c.from('matches').update({
+      status: 'completed',
+      mvp_registration_id: mvp?.registration_id ?? null, mvp_ign: mvp?.ign ?? null, mvp_kills: mvp?.kills ?? null,
+    }).eq('id', matchId));
   },
 };
 
@@ -158,7 +188,7 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v3';
+const DEMO_KEY = 'tmg-demo-v4';
 const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
@@ -182,8 +212,12 @@ function seed() {
     results: [],
     bans: [],
   };
-  db.matches.forEach(m => { m.entry_fee = 0; m.reg_close_minutes = 30; });
-  db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: '₹800', per_kill: '₹10', rules, status: 'open', entry_fee: 20, reg_close_minutes: 30 });
+  db.matches.forEach(m => Object.assign(m, {
+    entry_fee: 0, reg_close_minutes: 30, checkin_required: false,
+    prize_1: 250, prize_2: 150, prize_3: 75, prize_mvp: 50, prize_pool: null, per_kill: null,
+  }));
+  Object.assign(db.matches[0], { checkin_required: true });
+  db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 20, reg_close_minutes: 30, checkin_required: false, prize_1: 400, prize_2: 200, prize_3: 100, prize_mvp: 100 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];
   let bgmi = 5100000000;
   for (const matchId of [1, 4]) {
@@ -201,6 +235,8 @@ function seed() {
       }
     });
   }
+  const mvp = db.registrations.find(r => r.match_id === 4 && r.slot_no === 1);
+  Object.assign(db.matches[3], { mvp_registration_id: mvp.id, mvp_ign: mvp.players[0].ign, mvp_kills: 8 });
   return db;
 }
 
@@ -220,7 +256,13 @@ const confirmed = matchId => db.registrations.filter(r => r.match_id === matchId
 const holdsSlot = r => r.status === 'confirmed'
   || (r.status === 'pending' && (r.utr || Date.parse(r.hold_until) > Date.now()));
 const active = matchId => db.registrations.filter(r => r.match_id === matchId && holdsSlot(r));
-const withFilled = m => ({ ...m, filled: active(m.id).length });
+const withFilled = m => {
+  const r = db.registrations.find(x => x.id === m.mvp_registration_id);
+  return {
+    ...m, filled: active(m.id).length, mvp_team: r?.team_name ?? null,
+    waitlist: db.registrations.filter(x => x.match_id === m.id && x.status === 'waitlist').length,
+  };
+};
 const withPoints = x => ({ ...x, points: placementPoints(x.placement) + x.kills });
 const clone = v => JSON.parse(JSON.stringify(v));
 
@@ -245,8 +287,44 @@ function checkDuplicates(others, team_name, players) {
 }
 function ownRegistration(token) {
   const r = db.registrations.find(x => x.pay_token === token);
-  if (!r || !['pending', 'confirmed'].includes(r.status)) throw new Error('Registration not found');
+  if (!r || !['pending', 'confirmed', 'waitlist'].includes(r.status)) throw new Error('Registration not found');
   return r;
+}
+// Same as the assign_slot() trigger: lowest free number when a team gets a place.
+function setStatus(r, status) {
+  if (['pending', 'confirmed'].includes(status)) {
+    if (r.slot_no == null) {
+      const m = db.matches.find(x => x.id === r.match_id);
+      const taken = new Set(db.registrations.filter(x => x.match_id === r.match_id && x !== r).map(x => x.slot_no));
+      const free = Array.from({ length: m.max_slots }, (_, i) => i + 1).find(n => !taken.has(n));
+      if (!free) throw new Error('All slots are full');
+      r.slot_no = free;
+    }
+  } else {
+    r.slot_no = null;
+  }
+  r.status = status;
+}
+const checkinCloses = m => Date.parse(m.starts_at) - CHECKIN_CLOSES_MIN * 60e3;
+// Same as settle_match(): expired holds, no-shows, waitlist promotion.
+function settle(matchId) {
+  const m = db.matches.find(x => x.id === matchId);
+  if (!m || !ACTIVE.includes(m.status)) return;
+  const closed = m.checkin_required && Date.now() >= checkinCloses(m);
+  db.registrations = db.registrations.filter(r =>
+    !(r.match_id === matchId && r.status === 'pending' && !r.utr && Date.parse(r.hold_until) <= Date.now()));
+  if (closed) {
+    db.registrations.filter(r => r.match_id === matchId && r.status === 'confirmed' && !r.checked_in_at)
+      .forEach(r => setStatus(r, 'released'));
+  }
+  if (!(m.entry_fee > 0) && Date.now() < Date.parse(m.starts_at)) {
+    for (const w of db.registrations.filter(r => r.match_id === matchId && r.status === 'waitlist')) {
+      if (active(matchId).length >= m.max_slots) break;
+      setStatus(w, 'confirmed');
+      w.checked_in_at = closed ? new Date().toISOString() : null;
+    }
+  }
+  persist();
 }
 let demoAdmin = false;
 
@@ -265,40 +343,47 @@ const demo = {
     return clone(list);
   },
   async getMatch(id) {
+    settle(id);
     const m = db.matches.find(x => x.id === id);
     return m ? clone(withFilled(m)) : null;
   },
   async listRegistrations(matchId) {
-    return clone(confirmed(matchId).map(r => ({
-      id: r.id, match_id: r.match_id, slot_no: r.slot_no, team_name: r.team_name, igns: [],
+    return clone(confirmed(matchId).sort((a, b) => a.slot_no - b.slot_no).map(r => ({
+      id: r.id, match_id: r.match_id, slot_no: r.slot_no, team_name: r.team_name, igns: [], checked_in: !!r.checked_in_at,
     })));
   },
   async register(matchId, { team_name, phone, players }) {
+    settle(matchId);
     const m = db.matches.find(x => x.id === matchId);
     if (!m) throw new Error('Match not found');
     if (!registrationOpen(m)) throw new Error('Registration is closed for this match');
     team_name = checkTeam(m, team_name, players);
     if (!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Enter a valid 10-digit WhatsApp number');
     if (db.bans.some(b => b.kind === 'phone' && b.value === phone)) throw new Error('This number is not allowed to register. Contact the organizers.');
-    db.registrations = db.registrations.filter(r =>
-      !(r.match_id === matchId && r.status === 'pending' && !r.utr && Date.parse(r.hold_until) <= Date.now()));
-    if (active(matchId).length >= m.max_slots) throw new Error('All slots are full');
+    const paid = m.entry_fee > 0;
+    let status = paid ? 'pending' : 'confirmed';
+    if (active(matchId).length >= m.max_slots) {
+      if (paid) throw new Error('All slots are full');
+      if (db.registrations.filter(r => r.match_id === matchId && r.status === 'waitlist').length >= WAITLIST_MAX) {
+        throw new Error('All slots and the waitlist are full');
+      }
+      status = 'waitlist';
+    }
     const device = deviceId();
     const all = db.registrations.filter(r => r.match_id === matchId);
     if (device && all.some(r => r.device_id === device)) throw new Error('This phone has already registered a team for this match');
     if (all.some(r => r.phone === phone)) throw new Error('This WhatsApp number is already registered for this match');
     checkDuplicates(all, team_name, players);
-    const slot_no = Math.max(0, ...all.map(r => r.slot_no)) + 1;
-    const paid = m.entry_fee > 0;
     const reg = {
-      id: ++db.seq, match_id: matchId, slot_no, team_name, phone, status: paid ? 'pending' : 'confirmed',
+      id: ++db.seq, match_id: matchId, slot_no: null, team_name, phone, status: null,
       created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: device,
-      hold_until: paid ? new Date(Date.now() + HOLD_MS).toISOString() : null,
+      hold_until: status === 'pending' ? new Date(Date.now() + HOLD_MS).toISOString() : null, checked_in_at: null,
       players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
     };
+    setStatus(reg, status);
     db.registrations.push(reg);
     persist();
-    return { slot: slot_no, token: reg.pay_token, fee: m.entry_fee, status: reg.status };
+    return { slot: reg.slot_no, token: reg.pay_token, fee: m.entry_fee, status };
   },
   async editRegistration(token, { team_name, players }) {
     const r = ownRegistration(token);
@@ -313,14 +398,27 @@ const demo = {
   async cancelRegistration(token) {
     const r = ownRegistration(token);
     const m = db.matches.find(x => x.id === r.match_id);
-    if (!registrationOpen(m)) throw new Error('Registration has closed. Contact the organizers to cancel.');
+    if (Date.now() >= Date.parse(m.starts_at)) throw new Error('The match has already started');
     if (r.status === 'confirmed' && m.entry_fee > 0) throw new Error('Paid registrations can only be cancelled by the organizers');
     db.registrations = db.registrations.filter(x => x !== r);
+    settle(m.id);
+  },
+  async checkIn(token) {
+    const found = db.registrations.find(x => x.pay_token === token);
+    if (!found) throw new Error('Registration not found');
+    settle(found.match_id);
+    const r = db.registrations.find(x => x.pay_token === token);
+    const m = db.matches.find(x => x.id === r.match_id);
+    if (!m.checkin_required) throw new Error('This match does not need check-in');
+    if (r.status !== 'confirmed') throw new Error('Only confirmed teams can check in');
+    if (Date.now() < Date.parse(m.starts_at) - CHECKIN_OPENS_MIN * 60e3) throw new Error('Check-in opens 60 minutes before the match');
+    if (Date.now() >= checkinCloses(m)) throw new Error('Check-in has closed');
+    r.checked_in_at ||= new Date().toISOString();
     persist();
   },
   async findRegistration(matchId, phone, bgmiId) {
     const r = db.registrations.find(x => x.match_id === matchId && x.phone === phone.trim()
-      && ['pending', 'confirmed'].includes(x.status) && x.players.some(p => p.bgmi_id === bgmiId.trim()));
+      && ['pending', 'confirmed', 'waitlist', 'released'].includes(x.status) && x.players.some(p => p.bgmi_id === bgmiId.trim()));
     if (!r) throw new Error('No registration found with that WhatsApp number and BGMI ID');
     return r.pay_token;
   },
@@ -336,19 +434,27 @@ const demo = {
     persist();
   },
   async registrationStatus(token) {
+    const found = db.registrations.find(x => x.pay_token === token);
+    if (!found) return null;
+    settle(found.match_id);
     const r = db.registrations.find(x => x.pay_token === token);
-    return r ? clone({
+    if (!r) return null;
+    const queue = db.registrations.filter(x => x.match_id === r.match_id && x.status === 'waitlist');
+    return clone({
       match_id: r.match_id, slot_no: r.slot_no, status: r.status, utr: r.utr, hold_until: r.hold_until,
-      team_name: r.team_name, players: r.players,
-    }) : null;
+      team_name: r.team_name, players: r.players, checked_in_at: r.checked_in_at ?? null,
+      waitlist_position: r.status === 'waitlist' ? queue.indexOf(r) + 1 : null,
+    });
   },
   async getRoom(matchId, token) {
+    settle(matchId);
     const m = db.matches.find(x => x.id === matchId);
     const r = db.rooms[matchId];
     if (!m || !r || !ACTIVE.includes(m.status)) return null;
     const revealAt = Date.parse(m.starts_at) - r.reveal_minutes * 60e3;
     const ok = Date.now() >= revealAt
-      && db.registrations.some(x => x.match_id === matchId && x.pay_token === token && x.status === 'confirmed');
+      && db.registrations.some(x => x.match_id === matchId && x.pay_token === token && x.status === 'confirmed'
+        && (!m.checkin_required || x.checked_in_at));
     return { room_id: ok ? r.room_id : null, room_pass: ok ? r.room_pass : null, reveal_at: new Date(revealAt).toISOString() };
   },
   async getResults(matchId) {
@@ -364,8 +470,9 @@ const demo = {
       if (m.starts_at < since || (mode && m.mode !== mode)) continue;
       const r = db.registrations.find(y => y.id === x.registration_id);
       const key = r.team_name.toLowerCase();
-      const row = rows.get(key) || { team_name: r.team_name, matches: 0, wins: 0, kills: 0, points: 0 };
+      const row = rows.get(key) || { team_name: r.team_name, matches: 0, wins: 0, kills: 0, points: 0, mvps: 0 };
       row.matches++;
+      row.mvps += m.mvp_registration_id === r.id ? 1 : 0;
       row.wins += x.placement === 1 ? 1 : 0;
       row.kills += x.kills;
       row.points += withPoints(x).points;
@@ -394,15 +501,16 @@ const demo = {
     persist();
   },
   async adminRegistrations(matchId) {
+    settle(matchId);
     return clone(db.registrations.filter(r => r.match_id === matchId)
-      .sort((a, b) => a.slot_no - b.slot_no)
+      .sort((a, b) => (a.slot_no ?? 999) - (b.slot_no ?? 999) || a.id - b.id)
       .map(r => {
         const x = db.results.find(y => y.registration_id === r.id);
         return { ...r, result: x ? withPoints(x) : null };
       }));
   },
   async setRegistrationStatus(id, status) {
-    db.registrations.find(r => r.id === id).status = status;
+    setStatus(db.registrations.find(r => r.id === id), status);
     persist();
   },
   async listBans() { return clone(db.bans); },
@@ -418,10 +526,13 @@ const demo = {
     db.bans = db.bans.filter(b => b.id !== id);
     persist();
   },
-  async saveResults(matchId, rows) {
+  async saveResults(matchId, rows, mvp) {
     db.results = db.results.filter(x => x.match_id !== matchId)
       .concat(rows.map(r => ({ ...r, match_id: matchId })));
-    db.matches.find(m => m.id === matchId).status = 'completed';
+    Object.assign(db.matches.find(m => m.id === matchId), {
+      status: 'completed',
+      mvp_registration_id: mvp?.registration_id ?? null, mvp_ign: mvp?.ign ?? null, mvp_kills: mvp?.kills ?? null,
+    });
     persist();
   },
 };
