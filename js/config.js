@@ -4,6 +4,6 @@
 export const CONFIG = {
   siteName: 'TeamMG Esports',
   whatsappGroup: 'https://chat.whatsapp.com/HZrLR0uH3BgJH1Zapbz6yn',
-  supabaseUrl: '',
-  supabaseAnonKey: '',
+  supabaseUrl: 'https://jbhjgzagntyniuvwgbhg.supabase.co',
+  supabaseAnonKey: 'sb_publishable_CfcEqORa54NJwkttWImcsg_yONFBsjm',
 };
