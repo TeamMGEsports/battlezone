@@ -60,6 +60,7 @@ async function showList() {
       <h1 style="margin:0">Matches</h1>
       <div class="actions">
         ${isDemo ? '<button class="btn" id="reset">Reset demo data</button>' : ''}
+        <button class="btn" id="bans">Bans</button>
         <button class="btn btn-primary" id="new">New match</button>
       </div>
     </div>
@@ -76,6 +77,7 @@ async function showList() {
             <button class="btn btn-small" data-act="edit" data-id="${m.id}">Edit</button>
             <button class="btn btn-small" data-act="copy" data-id="${m.id}">Copy +1 day</button>
             <button class="btn btn-small" data-act="teams" data-id="${m.id}">Teams</button>
+            <button class="btn btn-small" data-act="check" data-id="${m.id}">Room check</button>
             <button class="btn btn-small" data-act="results" data-id="${m.id}">Results</button>
           </div></td>
         </tr>`).join('') || '<tr><td colspan="5" class="empty">No matches yet.</td></tr>'}
@@ -83,6 +85,7 @@ async function showList() {
     </table></div>`;
   $('#new').addEventListener('click', guard(() => showEditor(null, matches[0])));
   $('#reset')?.addEventListener('click', guard(async () => { resetDemo(); await showList(); }));
+  $('#bans').addEventListener('click', guard(showBans));
   el.querySelector('tbody').addEventListener('click', guard(async e => {
     const btn = e.target.closest('button');
     if (!btn) return;
@@ -90,6 +93,7 @@ async function showList() {
     if (btn.dataset.act === 'edit') return showEditor(m);
     if (btn.dataset.act === 'copy') return showEditor(null, m, 1);
     if (btn.dataset.act === 'teams') return showTeams(m);
+    if (btn.dataset.act === 'check') return showRoomCheck(m);
     if (btn.dataset.act === 'results') return showResults(m);
   }));
 }
@@ -123,6 +127,7 @@ async function showEditor(m, template, dayShift = 0) {
         <label>Status<select name="status">${options(STATUSES, m ? m.status : 'open', v => v[0].toUpperCase() + v.slice(1))}</select></label>
       </div>
       ${CONFIG.upiId ? '' : '<p class="meta">Paid matches need your UPI ID in js/config.js before players can pay.</p>'}
+      <label>Registration closes this many minutes before start<input name="reg_close_minutes" type="number" min="0" max="600" required value="${src.reg_close_minutes ?? 30}"></label>
       <label>Rules<textarea name="rules">${esc(src.rules ?? DEFAULT_RULES)}</textarea></label>
       <fieldset>
         <legend>Room (hidden from players until reveal time)</legend>
@@ -130,7 +135,7 @@ async function showEditor(m, template, dayShift = 0) {
           <label>Room ID<input name="room_id" value="${esc(room.room_id || '')}" autocomplete="off"></label>
           <label>Password<input name="room_pass" value="${esc(room.room_pass || '')}" autocomplete="off"></label>
         </div>
-        <label>Show to players this many minutes before start<input name="reveal_minutes" type="number" min="0" max="120" value="${room.reveal_minutes ?? 15}"></label>
+        <label>Show to confirmed teams this many minutes before start<input name="reveal_minutes" type="number" min="0" max="120" value="${room.reveal_minutes ?? 15}"></label>
       </fieldset>
       <div class="actions">
         <button class="btn btn-primary">Save</button>
@@ -153,6 +158,7 @@ async function showEditor(m, template, dayShift = 0) {
       starts_at: fromInput(f.starts_at.value), max_slots: Number(f.max_slots.value),
       prize_pool: f.prize_pool.value.trim() || null, per_kill: f.per_kill.value.trim() || null,
       status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
+      reg_close_minutes: Number(f.reg_close_minutes.value || 0),
     }, {
       room_id: f.room_id.value.trim() || null, room_pass: f.room_pass.value.trim() || null,
       reveal_minutes: Number(f.reveal_minutes.value || 15),
@@ -195,6 +201,7 @@ async function showTeams(m) {
           <td><div class="actions">
             ${r.status === 'pending' && r.utr ? button(r, 'confirmed', 'Confirm') : ''}
             ${r.status === 'rejected' ? button(r, m.entry_fee > 0 && !r.utr ? 'pending' : 'confirmed', 'Restore') : button(r, 'rejected', r.status === 'pending' ? 'Reject' : 'Remove')}
+            <button class="btn btn-small" data-ban="${r.id}">Ban</button>
           </div></td>
         </tr>`;
       }).join('') || '<tr><td colspan="6" class="empty">No registrations yet.</td></tr>'}
@@ -206,10 +213,86 @@ async function showTeams(m) {
     $('#msg').innerHTML = '<p class="success">Copied.</p>';
   }));
   el.querySelector('tbody').addEventListener('click', guard(async e => {
+    const ban = e.target.closest('button[data-ban]');
+    if (ban) {
+      const r = regs.find(x => x.id === Number(ban.dataset.ban));
+      const reason = prompt(`Ban ${r.team_name}? Their WhatsApp number and all ${r.players.length} BGMI ID(s) will be blocked from registering for any match.\n\nReason (optional):`);
+      if (reason === null) return;
+      await api.addBans([{ kind: 'phone', value: r.phone }, ...r.players.map(p => ({ kind: 'bgmi_id', value: p.bgmi_id }))]
+        .map(b => ({ ...b, reason: reason.trim() || null })));
+      if (r.status !== 'rejected') await api.setRegistrationStatus(r.id, 'rejected');
+      return showTeams((await api.listMatches('all')).find(x => x.id === m.id));
+    }
     const btn = e.target.closest('button[data-id]');
     if (!btn) return;
     await api.setRegistrationStatus(Number(btn.dataset.id), btn.dataset.to);
     await showTeams((await api.listMatches('all')).find(x => x.id === m.id));
+  }));
+}
+
+// ---------- room check (for the room host) ----------
+async function showRoomCheck(m) {
+  const regs = (await api.adminRegistrations(m.id)).filter(r => r.status === 'confirmed');
+  const text = `${m.title} — slot list\n` + regs.map(r =>
+    `${r.slot_no}. ${r.team_name}: ${r.players.map(p => `${p.ign} (${p.bgmi_id})`).join(', ')}`).join('\n');
+  el.innerHTML = `
+    <p class="meta"><a href="#" id="back">← Matches</a></p>
+    <h1>Room check: ${esc(m.title)}</h1>
+    <p class="lead">Compare the room lobby with this list before starting. Remove anyone who isn’t listed, or who is in the wrong slot.</p>
+    <div class="actions" style="margin-bottom:1rem"><button class="btn" id="copy">Copy list</button></div>
+    <div id="msg"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th></tr></thead>
+      <tbody>${regs.map(r => `
+        <tr><td><strong>${r.slot_no}</strong></td><td>${esc(r.team_name)}</td>
+        <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta mono">${esc(p.bgmi_id)}</span>`).join('<br>')}</td></tr>`).join('')
+        || '<tr><td colspan="3" class="empty">No confirmed teams.</td></tr>'}
+      </tbody>
+    </table></div>`;
+  $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
+  $('#copy').addEventListener('click', guard(async () => {
+    await navigator.clipboard.writeText(text);
+    $('#msg').innerHTML = '<p class="success">Copied.</p>';
+  }));
+}
+
+// ---------- bans ----------
+async function showBans() {
+  const bans = await api.listBans();
+  el.innerHTML = `
+    <p class="meta"><a href="#" id="back">← Matches</a></p>
+    <h1>Bans</h1>
+    <p class="lead">Banned WhatsApp numbers and BGMI IDs can’t register for any match. Ban a whole team from its Teams page, or add one here.</p>
+    <form id="add-ban" class="panel">
+      <div class="row">
+        <label>Type<select name="kind"><option value="phone">WhatsApp number</option><option value="bgmi_id">BGMI ID</option></select></label>
+        <label>Value<input name="value" required inputmode="numeric" pattern="[0-9]{6,12}"></label>
+      </div>
+      <label>Reason (optional)<input name="reason" maxlength="100"></label>
+      <button class="btn btn-primary">Add ban</button>
+    </form>
+    <div id="msg"></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Type</th><th>Value</th><th>Reason</th><th>Since</th><th></th></tr></thead>
+      <tbody>${bans.map(b => `
+        <tr><td>${b.kind === 'phone' ? 'WhatsApp' : 'BGMI ID'}</td><td class="mono">${esc(b.value)}</td>
+        <td>${esc(b.reason || '–')}</td><td>${esc(dayLabel(b.created_at))}</td>
+        <td><button class="btn btn-small" data-unban="${b.id}">Unban</button></td></tr>`).join('')
+        || '<tr><td colspan="5" class="empty">No bans.</td></tr>'}
+      </tbody>
+    </table></div>`;
+  $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
+  $('#add-ban').addEventListener('submit', guard(async e => {
+    e.preventDefault();
+    const f = e.target;
+    await api.addBans([{ kind: f.kind.value, value: f.value.value.trim(), reason: f.reason.value.trim() || null }]);
+    await showBans();
+  }));
+  el.querySelector('tbody').addEventListener('click', guard(async e => {
+    const btn = e.target.closest('button[data-unban]');
+    if (!btn) return;
+    await api.removeBan(Number(btn.dataset.unban));
+    await showBans();
   }));
 }
 

@@ -1,4 +1,4 @@
-import { api, PLAYERS_PER_MODE } from '../api.js';
+import { api, PLAYERS_PER_MODE, registrationOpen } from '../api.js';
 import { CONFIG } from '../config.js';
 import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError } from '../ui.js';
 
@@ -22,28 +22,51 @@ function save(v) {
   try { v ? localStorage.setItem(savedKey, JSON.stringify(v)) : localStorage.removeItem(savedKey); } catch { /* not critical */ }
 }
 
-function registerForm(m, notice = '') {
+// Registration form. With `current` it edits that team instead (no phone field).
+function registerForm(m, notice = '', current = null) {
   const n = PLAYERS_PER_MODE[m.mode];
-  const players = Array.from({ length: n }, (_, i) => `
+  const players = Array.from({ length: n }, (_, i) => {
+    const p = current?.players[i] || {};
+    return `
     <fieldset>
       <legend>${n === 1 ? 'Player' : i === 0 ? 'Player 1 (captain)' : `Player ${i + 1}`}</legend>
       <div class="row">
-        <label>In-game name<input name="ign" required maxlength="20" autocomplete="off"></label>
-        <label>BGMI character ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits" autocomplete="off"></label>
+        <label>In-game name<input name="ign" required maxlength="20" autocomplete="off" value="${esc(p.ign || '')}"></label>
+        <label>BGMI character ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits" autocomplete="off" value="${esc(p.bgmi_id || '')}"></label>
       </div>
-    </fieldset>`).join('');
+    </fieldset>`;
+  }).join('');
   return `
-    <form id="register" class="panel">
-      <h3>Register</h3>
+    <form id="register" class="panel"${current ? ' data-edit="1"' : ''}>
+      <h3>${current ? `Edit slot #${current.slot_no}` : 'Register'}</h3>
       ${notice}
-      ${m.entry_fee > 0 ? `<p class="meta">Entry fee ₹${m.entry_fee}, paid by UPI. After you register, your slot is held for 15 minutes while you pay.</p>` : ''}
-      ${m.mode === 'solo' ? '' : '<label>Team name<input name="team_name" required minlength="2" maxlength="30"></label>'}
-      <label>WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number" placeholder="10-digit number"></label>
+      ${!current && m.entry_fee > 0 ? `<p class="meta">Entry fee ₹${m.entry_fee}, paid by UPI. After you register, your slot is held for 15 minutes while you pay.</p>` : ''}
+      ${m.mode === 'solo' ? '' : `<label>Team name<input name="team_name" required minlength="2" maxlength="30" value="${esc(current?.team_name || '')}"></label>`}
+      ${current ? '' : `<label>WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number" placeholder="10-digit number"></label>
+      <p class="meta">Your number is only visible to organizers. Room details will show on this phone.</p>`}
       ${players}
-      <p class="meta">Your number is only visible to organizers.</p>
-      <button class="btn btn-primary" type="submit">${m.entry_fee > 0 ? 'Register & hold slot' : 'Register'}</button>
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">${current ? 'Save changes' : m.entry_fee > 0 ? 'Register & hold slot' : 'Register'}</button>
+        ${current ? '<button class="btn" type="button" id="edit-cancel">Back</button>' : ''}
+      </div>
       <div id="register-msg" role="status"></div>
     </form>`;
+}
+
+function findForm() {
+  return `
+    <details class="panel find">
+      <summary>Already registered? Find my registration</summary>
+      <form id="find">
+        <p class="meta">Use the captain’s WhatsApp number and the BGMI ID of any player in the team. Teammates can use this to see the room details on their own phone.</p>
+        <div class="row">
+          <label>Captain’s WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number"></label>
+          <label>Your BGMI ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits"></label>
+        </div>
+        <button class="btn">Find</button>
+        <div id="find-msg" role="status"></div>
+      </form>
+    </details>`;
 }
 
 function upiLink(m, slot) {
@@ -82,11 +105,21 @@ function payPanel(m, reg) {
     </div>`;
 }
 
+function teamActions(m, reg) {
+  if (!registrationOpen(m)) return '';
+  const canCancel = !(reg.status === 'confirmed' && m.entry_fee > 0);
+  return `<div class="actions" style="margin-top:.75rem">
+    <button type="button" class="btn btn-small" id="edit-team">Edit team</button>
+    ${canCancel ? '<button type="button" class="btn btn-small" id="cancel-reg">Cancel registration</button>' : ''}
+  </div>`;
+}
+
 function regPanel(m, reg) {
   if (!reg) return '';
   if (reg.status === 'confirmed') {
-    return `<div class="panel"><strong class="success">You’re registered — slot #${reg.slot_no}.</strong>
-      <span class="meta">Come back here 15 minutes before start for the room ID.</span></div>`;
+    return `<div class="panel"><strong class="success">You’re registered — slot #${reg.slot_no}${reg.team_name ? `, ${esc(reg.team_name)}` : ''}.</strong>
+      <span class="meta">Room details appear on this page before the match. Share them only with your team.</span>
+      ${teamActions(m, reg)}</div>`;
   }
   if (reg.status === 'rejected') {
     return `<div class="panel"><strong class="error">Your registration (slot #${reg.slot_no}) was not accepted.</strong>
@@ -95,15 +128,15 @@ function regPanel(m, reg) {
   if (reg.utr) {
     return `<div class="panel"><strong>Payment submitted for slot #${reg.slot_no}.</strong>
       <p class="meta">UTR ${esc(reg.utr)}. Waiting for an organizer to confirm it.</p>
-      <button type="button" class="btn btn-small" id="recheck">Check again</button></div>`;
+      <button type="button" class="btn btn-small" id="recheck">Check again</button>${teamActions(m, reg)}</div>`;
   }
-  return payPanel(m, reg);
+  return payPanel(m, reg) + teamActions(m, reg);
 }
 
 async function myRegistration() {
   const saved = loadSaved();
   if (!saved) return [null, null];
-  if (!saved.token) return [saved, { slot_no: saved.slot, status: 'confirmed' }]; // older free registration
+  if (!saved.token) { save(null); return [null, null]; } // older save without a token: use "Find my registration"
   const reg = await api.registrationStatus(saved.token);
   if (!reg) { save(null); return [null, null]; }
   if (reg.status === 'pending' && !reg.utr && !countdown(reg.hold_until)) {
@@ -122,12 +155,14 @@ async function render() {
   document.title = `${m.title} — ${document.title.split(' — ').pop()}`;
   const [label, tone] = statusLabel(m);
   const started = Date.parse(m.starts_at) <= Date.now();
-  const canRegister = m.status === 'open' && !started && m.filled < m.max_slots;
+  const regOpen = registrationOpen(m);
+  const canRegister = regOpen && m.filled < m.max_slots;
+  const closesAt = new Date(Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3).toISOString();
   const done = m.status === 'completed';
   const [teams, results, room, [saved, reg]] = await Promise.all([
     api.listRegistrations(id),
     done ? api.getResults(id) : [],
-    done ? null : api.getRoom(id),
+    done ? null : api.getRoom(id, loadSaved()?.token),
     myRegistration(),
   ]);
   const expired = reg === 'expired';
@@ -137,7 +172,8 @@ async function render() {
   el.innerHTML = `
     <p class="meta"><a href="index.html">← All matches</a></p>
     <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span></h1>
-    <p class="lead">${esc(dayLabel(m.starts_at))}, ${esc(fmtTime(m.starts_at))} IST${!started && !done ? ` · starts in <span id="cd">${countdown(m.starts_at)}</span>` : ''}</p>
+    <p class="lead">${esc(dayLabel(m.starts_at))}, ${esc(fmtTime(m.starts_at))} IST${!started && !done ? ` · starts in <span id="cd">${countdown(m.starts_at)}</span>` : ''}
+      ${m.status === 'open' && !started ? `<br><span class="meta">Registration ${regOpen ? 'closes' : 'closed'} at ${esc(fmtTime(closesAt))} IST.</span>` : ''}</p>
     <div class="facts">
       <div class="fact"><span>Mode</span><strong>${MODE[m.mode]}</strong></div>
       <div class="fact"><span>Map</span><strong>${esc(m.map)}</strong></div>
@@ -147,15 +183,32 @@ async function render() {
       <div class="fact"><span>Slots</span><strong>${m.filled}/${m.max_slots}</strong></div>
     </div>
     ${done ? `<h2>Results</h2>${resultsTable(results)}` : ''}
-    ${room ? `<div class="panel" id="room">${roomHtml(room)}</div>` : ''}
-    ${regPanel(m, mine)}
+    ${room ? `<div class="panel" id="room">${roomHtml(room, mine)}</div>` : ''}
+    <div id="mine">${regPanel(m, mine)}</div>
     ${canRegister && !mine ? registerForm(m, expired ? '<p class="error">Your 15-minute payment window ended, so the slot was released. You can register again.</p>' : '') : ''}
+    ${!mine && !done && m.status !== 'cancelled' ? findForm() : ''}
     <div class="actions"><a class="btn" href="${shareLink(shareText)}" target="_blank" rel="noopener">Share on WhatsApp</a></div>
     ${m.rules ? `<h2>Rules</h2><p class="rules">${esc(m.rules)}</p>` : ''}
     <h2>Registered ${unit(m.mode, 2)} (${teams.length})</h2>
-    ${teams.length ? `<ol class="teams">${teams.map(t => `<li>${esc(t.team_name)}${m.mode === 'solo' ? '' : ` <span class="meta">${esc(t.igns.join(', '))}</span>`}</li>`).join('')}</ol>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}`;
+    ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}`;
 
   $('#register')?.addEventListener('submit', e => submit(e, m));
+  $('#find')?.addEventListener('submit', e => find(e, m));
+  $('#edit-team')?.addEventListener('click', () => {
+    $('#mine').innerHTML = registerForm(m, '', mine);
+    $('#register').addEventListener('submit', e => saveEdit(e, m, saved));
+    $('#edit-cancel').addEventListener('click', () => render().catch(err => showError(el, err)));
+  });
+  $('#cancel-reg')?.addEventListener('click', async () => {
+    if (!confirm(`Cancel your registration for slot #${mine.slot_no}? Your slot will be given to someone else.`)) return;
+    try {
+      await api.cancelRegistration(saved.token);
+      save(null);
+      await render();
+    } catch (err) {
+      alert(err.message);
+    }
+  });
   $('#utr-form')?.addEventListener('submit', e => submitUtr(e, saved));
   $('#recheck')?.addEventListener('click', () => render().catch(err => showError(el, err)));
   el.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
@@ -177,13 +230,17 @@ async function drawQr(box, text) {
   }
 }
 
-function roomHtml(room) {
+function roomHtml(room, mine) {
   if (room.room_id) {
     return `<h3>Room details</h3><div class="room">
       <div><span class="meta">Room ID</span><br><strong>${esc(room.room_id)}</strong></div>
       <div><span class="meta">Password</span><br><strong>${esc(room.room_pass)}</strong></div></div>`;
   }
-  return `<h3>Room details</h3><p class="meta">Shown here at ${esc(fmtTime(room.reveal_at))} IST (in <span id="room-cd">${countdown(room.reveal_at)}</span>).</p>`;
+  const left = countdown(room.reveal_at);
+  if (mine?.status === 'confirmed') {
+    return `<h3>Room details</h3><p class="meta">Shown here at ${esc(fmtTime(room.reveal_at))} IST${left ? ` (in <span id="room-cd">${left}</span>)` : ''}.</p>`;
+  }
+  return `<h3>Room details</h3><p class="meta">Only shown to confirmed teams, on the phone they registered with, from ${esc(fmtTime(room.reveal_at))} IST.</p>`;
 }
 
 let timer;
@@ -193,7 +250,7 @@ function tick(m, room, mine) {
     const rerender = () => { clearInterval(timer); render().catch(err => showError(el, err)); };
     const cd = $('#cd');
     if (cd) cd.textContent = countdown(m.starts_at) || 'now';
-    if (room && !room.room_id) {
+    if (room && !room.room_id && mine?.status === 'confirmed') {
       const left = countdown(room.reveal_at);
       if (left) { const rc = $('#room-cd'); if (rc) rc.textContent = left; } else return rerender();
     }
@@ -215,7 +272,7 @@ async function submit(e, m) {
   e.preventDefault();
   const form = e.target;
   const msg = $('#register-msg');
-  const btn = form.querySelector('button');
+  const btn = form.querySelector('button[type=submit]');
   const players = readPlayers(form);
   btn.disabled = true;
   msg.innerHTML = '';
@@ -230,6 +287,37 @@ async function submit(e, m) {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (err) {
     showError(msg, err);
+    btn.disabled = false;
+  }
+}
+
+async function find(e, m) {
+  e.preventDefault();
+  const form = e.target;
+  try {
+    const token = await api.findRegistration(m.id, form.phone.value.trim(), form.bgmi_id.value.trim());
+    const reg = await api.registrationStatus(token);
+    save({ slot: reg.slot_no, token });
+    await render();
+  } catch (err) {
+    showError($('#find-msg'), err);
+  }
+}
+
+async function saveEdit(e, m, saved) {
+  e.preventDefault();
+  const form = e.target;
+  const btn = form.querySelector('button[type=submit]');
+  const players = readPlayers(form);
+  btn.disabled = true;
+  try {
+    await api.editRegistration(saved.token, {
+      team_name: m.mode === 'solo' ? players[0].ign : form.team_name.value,
+      players,
+    });
+    await render();
+  } catch (err) {
+    showError($('#register-msg'), err);
     btn.disabled = false;
   }
 }
