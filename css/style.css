@@ -145,3 +145,7 @@ ul.teams .slot { display: inline-block; min-width: 2.5rem; color: var(--muted); 
 @media (max-width: 480px) { ul.teams { columns: 1; } }
 details.find summary { cursor: pointer; font-weight: 500; }
 details.find[open] summary { margin-bottom: .75rem; }
+.mvp { margin: 0 0 .75rem; }
+label.check { display: flex; gap: .5rem; align-items: flex-start; font-weight: 400; }
+label.check input { width: auto; margin-top: .25rem; }
+textarea.post { font-family: inherit; font-size: .9rem; margin-bottom: .5rem; }

@@ -1,6 +1,7 @@
 import { api, isDemo, placementPoints, resetDemo } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError } from '../ui.js';
+import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes } from '../ui.js';
 
 initShell('admin');
 
@@ -60,6 +61,8 @@ async function showList() {
       <h1 style="margin:0">Matches</h1>
       <div class="actions">
         ${isDemo ? '<button class="btn" id="reset">Reset demo data</button>' : ''}
+        <button class="btn" id="post-tonight">Post: tonight</button>
+        <button class="btn" id="post-board">Post: weekly top 10</button>
         <button class="btn" id="bans">Bans</button>
         <button class="btn btn-primary" id="new">New match</button>
       </div>
@@ -71,13 +74,14 @@ async function showList() {
         <tr>
           <td>${esc(dayLabel(m.starts_at))}<br><span class="meta">${esc(fmtTime(m.starts_at))}</span></td>
           <td>${esc(m.title)}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}</span></td>
-          <td>${m.filled}/${m.max_slots}</td>
+          <td>${m.filled}/${m.max_slots}${m.waitlist ? `<br><span class="meta">+${m.waitlist} waiting</span>` : ''}</td>
           <td>${statusLabel(m)[0]}</td>
           <td><div class="actions">
             <button class="btn btn-small" data-act="edit" data-id="${m.id}">Edit</button>
             <button class="btn btn-small" data-act="copy" data-id="${m.id}">Copy +1 day</button>
             <button class="btn btn-small" data-act="teams" data-id="${m.id}">Teams</button>
             <button class="btn btn-small" data-act="check" data-id="${m.id}">Room check</button>
+            <button class="btn btn-small" data-act="posts" data-id="${m.id}">WhatsApp</button>
             <button class="btn btn-small" data-act="results" data-id="${m.id}">Results</button>
           </div></td>
         </tr>`).join('') || '<tr><td colspan="5" class="empty">No matches yet.</td></tr>'}
@@ -86,6 +90,18 @@ async function showList() {
   $('#new').addEventListener('click', guard(() => showEditor(null, matches[0])));
   $('#reset')?.addEventListener('click', guard(async () => { resetDemo(); await showList(); }));
   $('#bans').addEventListener('click', guard(showBans));
+  $('#post-tonight').addEventListener('click', guard(async () => {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const tonight = (await api.listMatches('upcoming'))
+      .filter(m => new Date(m.starts_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' }) === today);
+    if (!tonight.length) throw new Error('No matches scheduled for today.');
+    showPosts('Tonight’s matches', [['Tonight’s matches', tonightPost(tonight)]]);
+  }));
+  $('#post-board').addEventListener('click', guard(async () => {
+    const rows = await api.leaderboard(new Date(Date.now() - 7 * 864e5).toISOString());
+    if (!rows.length) throw new Error('No results in the last 7 days.');
+    showPosts('Weekly leaderboard', [['Weekly top 10', leaderboardPost(rows)]]);
+  }));
   el.querySelector('tbody').addEventListener('click', guard(async e => {
     const btn = e.target.closest('button');
     if (!btn) return;
@@ -94,6 +110,7 @@ async function showList() {
     if (btn.dataset.act === 'copy') return showEditor(null, m, 1);
     if (btn.dataset.act === 'teams') return showTeams(m);
     if (btn.dataset.act === 'check') return showRoomCheck(m);
+    if (btn.dataset.act === 'posts') return showMatchPosts(m);
     if (btn.dataset.act === 'results') return showResults(m);
   }));
 }
@@ -118,16 +135,26 @@ async function showEditor(m, template, dayShift = 0) {
         <label>Start (IST)<input name="starts_at" type="datetime-local" required value="${toInput(starts)}"></label>
         <label>Max slots<input name="max_slots" type="number" min="1" max="100" required value="${src.max_slots || 25}"></label>
       </div>
-      <div class="row">
-        <label>Prize pool<input name="prize_pool" value="${esc(src.prize_pool || '')}" placeholder="₹500"></label>
-        <label>Per kill<input name="per_kill" value="${esc(src.per_kill || '')}" placeholder="₹10"></label>
-      </div>
+      <fieldset>
+        <legend>Prizes in ₹ (leave empty if none)</legend>
+        <div class="row">
+          <label>1st<input name="prize_1" type="number" min="0" max="100000" value="${src.prize_1 ?? ''}"></label>
+          <label>2nd<input name="prize_2" type="number" min="0" max="100000" value="${src.prize_2 ?? ''}"></label>
+        </div>
+        <div class="row">
+          <label>3rd<input name="prize_3" type="number" min="0" max="100000" value="${src.prize_3 ?? ''}"></label>
+          <label>MVP (most kills)<input name="prize_mvp" type="number" min="0" max="100000" value="${src.prize_mvp ?? ''}"></label>
+        </div>
+        <label>Per kill (optional)<input name="per_kill" value="${esc(src.per_kill || '')}" placeholder="₹10"></label>
+      </fieldset>
       <div class="row">
         <label>Entry fee in ₹ (0 = free)<input name="entry_fee" type="number" min="0" max="10000" required value="${src.entry_fee ?? 0}"></label>
         <label>Status<select name="status">${options(STATUSES, m ? m.status : 'open', v => v[0].toUpperCase() + v.slice(1))}</select></label>
       </div>
       ${CONFIG.upiId ? '' : '<p class="meta">Paid matches need your UPI ID in js/config.js before players can pay.</p>'}
       <label>Registration closes this many minutes before start<input name="reg_close_minutes" type="number" min="0" max="600" required value="${src.reg_close_minutes ?? 30}"></label>
+      <label class="check"><input type="checkbox" name="checkin_required"${src.checkin_required ? ' checked' : ''}>
+        Require check-in (60 to 20 minutes before start). Teams that don’t check in lose their slot to the waitlist.</label>
       <label>Rules<textarea name="rules">${esc(src.rules ?? DEFAULT_RULES)}</textarea></label>
       <fieldset>
         <legend>Room (hidden from players until reveal time)</legend>
@@ -152,11 +179,18 @@ async function showEditor(m, template, dayShift = 0) {
   $('#edit').addEventListener('submit', guard(async e => {
     e.preventDefault();
     const f = e.target;
+    const num = v => v === '' ? null : Number(v);
+    const prizes = {
+      prize_1: num(f.prize_1.value), prize_2: num(f.prize_2.value),
+      prize_3: num(f.prize_3.value), prize_mvp: num(f.prize_mvp.value),
+    };
     await api.saveMatch({
       ...(m ? { id: m.id } : {}),
       title: f.title.value.trim(), mode: f.mode.value, map: f.map.value,
       starts_at: fromInput(f.starts_at.value), max_slots: Number(f.max_slots.value),
-      prize_pool: f.prize_pool.value.trim() || null, per_kill: f.per_kill.value.trim() || null,
+      per_kill: f.per_kill.value.trim() || null,
+      ...prizes, prize_pool: hasPrizes(prizes) ? null : src.prize_pool ?? null,
+      checkin_required: f.checkin_required.checked,
       status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
       reg_close_minutes: Number(f.reg_close_minutes.value || 0),
     }, {
@@ -169,7 +203,10 @@ async function showEditor(m, template, dayShift = 0) {
 
 // ---------- registrations ----------
 function regState(r) {
-  if (r.status !== 'pending') return r.status === 'confirmed' ? ['Confirmed', 'ok'] : ['Removed', 'muted'];
+  if (r.status === 'confirmed') return ['Confirmed', 'ok'];
+  if (r.status === 'waitlist') return ['Waitlist', 'muted'];
+  if (r.status === 'released') return ['No check-in', 'muted'];
+  if (r.status === 'rejected') return ['Removed', 'muted'];
   if (r.utr) return ['Paid? check UTR', 'live'];
   const left = countdown(r.hold_until);
   return left ? [`Awaiting payment (${left})`, 'muted'] : ['Hold expired', 'muted'];
@@ -180,7 +217,7 @@ async function showTeams(m) {
   const ok = regs.filter(r => r.status === 'confirmed');
   const toCheck = regs.filter(r => r.status === 'pending' && r.utr).length;
   const listText = `${m.title} — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)}\n` +
-    ok.map(r => `${r.slot_no}. ${r.team_name}`).join('\n');
+    ok.sort((a, b) => a.slot_no - b.slot_no).map(r => `${r.slot_no}. ${r.team_name}`).join('\n');
   const button = (r, to, text) => `<button class="btn btn-small" data-id="${r.id}" data-to="${to}">${text}</button>`;
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
@@ -189,18 +226,20 @@ async function showTeams(m) {
     <div class="actions" style="margin-bottom:1rem"><button class="btn" id="copy">Copy slot list for WhatsApp</button></div>
     <div id="msg"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th><th>WhatsApp</th>${m.entry_fee > 0 ? '<th>Payment</th>' : ''}<th></th></tr></thead>
+      <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th><th>WhatsApp</th><th>Status</th><th></th></tr></thead>
       <tbody>${regs.map(r => {
         const [state, tone] = regState(r);
         return `
-        <tr${r.status === 'rejected' ? ' style="opacity:.5"' : ''}>
-          <td>${r.slot_no}</td><td>${esc(r.team_name)}</td>
+        <tr${['rejected', 'released'].includes(r.status) ? ' style="opacity:.5"' : ''}>
+          <td>${r.slot_no ?? '–'}</td><td>${esc(r.team_name)}</td>
           <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta">${esc(p.bgmi_id)}</span>`).join('<br>')}</td>
           <td><a href="https://wa.me/91${esc(r.phone)}" target="_blank" rel="noopener">${esc(r.phone)}</a></td>
-          ${m.entry_fee > 0 ? `<td><span class="tag tag-${tone}">${state}</span>${r.utr ? `<br><span class="mono">${esc(r.utr)}</span>` : ''}</td>` : ''}
+          <td><span class="tag tag-${tone}">${state}</span>${r.utr ? `<br><span class="mono">${esc(r.utr)}</span>` : ''}
+            ${m.checkin_required && r.status === 'confirmed' ? `<br><span class="meta">${r.checked_in_at ? '✓ checked in' : 'not checked in'}</span>` : ''}</td>
           <td><div class="actions">
             ${r.status === 'pending' && r.utr ? button(r, 'confirmed', 'Confirm') : ''}
-            ${r.status === 'rejected' ? button(r, m.entry_fee > 0 && !r.utr ? 'pending' : 'confirmed', 'Restore') : button(r, 'rejected', r.status === 'pending' ? 'Reject' : 'Remove')}
+            ${r.status === 'waitlist' ? button(r, 'confirmed', 'Give slot') : ''}
+            ${['rejected', 'released'].includes(r.status) ? button(r, m.entry_fee > 0 && !r.utr ? 'pending' : 'confirmed', 'Restore') : button(r, 'rejected', r.status === 'pending' ? 'Reject' : 'Remove')}
             <button class="btn btn-small" data-ban="${r.id}">Ban</button>
           </div></td>
         </tr>`;
@@ -256,6 +295,39 @@ async function showRoomCheck(m) {
   }));
 }
 
+// ---------- WhatsApp posts ----------
+function showPosts(title, posts) {
+  el.innerHTML = `
+    <p class="meta"><a href="#" id="back">← Matches</a></p>
+    <h1>WhatsApp: ${esc(title)}</h1>
+    <p class="lead">Copy a message, or open it straight in WhatsApp and pick your group.</p>
+    ${posts.map(([name, text], i) => `
+      <div class="panel">
+        <h3>${esc(name)}</h3>
+        <textarea class="post" id="post-${i}" rows="${Math.min(14, text.split('\n').length + 1)}">${esc(text)}</textarea>
+        <div class="actions">
+          <button class="btn btn-small" data-copy="${i}">Copy</button>
+          <a class="btn btn-small" data-open="${i}" href="${shareLink(text)}" target="_blank" rel="noopener">Open in WhatsApp</a>
+        </div>
+      </div>`).join('')}`;
+  $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
+  el.querySelectorAll('textarea.post').forEach((t, i) => t.addEventListener('input', () => {
+    el.querySelector(`[data-open="${i}"]`).href = shareLink(t.value);
+  }));
+  el.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', guard(async () => {
+    await navigator.clipboard.writeText($(`#post-${b.dataset.copy}`).value);
+    b.textContent = 'Copied';
+  })));
+}
+
+async function showMatchPosts(m) {
+  const posts = [['Registration open', registrationPost(m)]];
+  if (m.checkin_required) posts.push(['Check-in open', checkinPost(m)]);
+  posts.push(['Room open', roomPost(m)]);
+  if (m.status === 'completed') posts.push(['Results', resultsPost(m, await api.getResults(m.id))]);
+  showPosts(m.title, posts);
+}
+
 // ---------- bans ----------
 async function showBans() {
   const bans = await api.listBans();
@@ -298,7 +370,12 @@ async function showBans() {
 
 // ---------- results ----------
 async function showResults(m) {
-  const regs = (await api.adminRegistrations(m.id)).filter(r => r.status === 'confirmed');
+  const regs = (await api.adminRegistrations(m.id)).filter(r => r.status === 'confirmed')
+    .sort((a, b) => a.slot_no - b.slot_no);
+  const placePrize = { 1: m.prize_1, 2: m.prize_2, 3: m.prize_3 };
+  const players = regs.flatMap(r => r.players.map(p => ({ reg: r, ign: p.ign })));
+  const mvpValue = (regId, ign) => `${regId}|${ign}`;
+  const curMvp = m.mvp_ign ? mvpValue(m.mvp_registration_id ?? regs.find(r => r.team_name === m.mvp_team)?.id, m.mvp_ign) : '';
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
     <h1>Results: ${esc(m.title)}</h1>
@@ -312,21 +389,50 @@ async function showResults(m) {
             <td><input name="placement" type="number" min="1" max="100" value="${r.result?.placement ?? ''}"></td>
             <td><input name="kills" type="number" min="0" max="99" value="${r.result?.kills ?? ''}"></td>
             <td class="num pts">–</td>
-            <td><input name="prize" style="width:6rem" value="${esc(r.result?.prize || '')}" placeholder="₹"></td>
+            <td><input name="prize" style="width:6rem" value="${esc(r.result?.prize || '')}" placeholder="₹" data-auto="${r.result?.prize ? '' : '1'}"></td>
           </tr>`).join('') || '<tr><td colspan="6" class="empty">No confirmed teams.</td></tr>'}
         </tbody>
       </table></div>
+      <fieldset style="margin-top:1rem">
+        <legend>MVP (player with the most kills)${m.prize_mvp ? `: ₹${m.prize_mvp}` : ''}</legend>
+        <div class="row">
+          <label>Player<select name="mvp"><option value="">No MVP</option>
+            ${players.map(p => `<option value="${esc(mvpValue(p.reg.id, p.ign))}"${mvpValue(p.reg.id, p.ign) === curMvp ? ' selected' : ''}>${esc(p.ign)} (${esc(p.reg.team_name)})</option>`).join('')}
+          </select></label>
+          <label>MVP kills<input name="mvp_kills" type="number" min="0" max="99" value="${m.mvp_kills ?? ''}"></label>
+        </div>
+        ${m.mode === 'solo' ? '<p class="meta">For solo matches the player with the most kills is picked automatically. You can change it.</p>' : '<p class="meta">Pick the player with the most kills from the end-of-match screen.</p>'}
+      </fieldset>
       <div class="actions"><button class="btn btn-primary">Save results &amp; mark completed</button></div>
       <div id="msg"></div>
     </form>`;
   const form = $('#results');
   const rows = () => [...form.querySelectorAll('tbody tr[data-id]')];
-  const update = () => rows().forEach(tr => {
-    const p = Number(tr.querySelector('[name=placement]').value);
-    const k = Number(tr.querySelector('[name=kills]').value || 0);
-    tr.querySelector('.pts').textContent = p ? placementPoints(p) + k : '–';
+  let mvpTouched = Boolean(curMvp);
+  const update = () => {
+    rows().forEach(tr => {
+      const p = Number(tr.querySelector('[name=placement]').value);
+      const k = Number(tr.querySelector('[name=kills]').value || 0);
+      tr.querySelector('.pts').textContent = p ? placementPoints(p) + k : '–';
+      const prize = tr.querySelector('[name=prize]');
+      if (prize.dataset.auto) prize.value = placePrize[p] ? `₹${placePrize[p]}` : '';
+    });
+    // Solo: the player with the most kills is the MVP, unless the admin picked one.
+    if (m.mode === 'solo' && !mvpTouched) {
+      const best = rows().map(tr => ({ tr, k: Number(tr.querySelector('[name=kills]').value || 0) }))
+        .sort((a, b) => b.k - a.k)[0];
+      if (best?.k > 0) {
+        const r = regs.find(x => x.id === Number(best.tr.dataset.id));
+        form.mvp.value = mvpValue(r.id, r.players[0].ign);
+        form.mvp_kills.value = best.k;
+      }
+    }
+  };
+  form.addEventListener('input', e => {
+    if (e.target.name === 'prize') delete e.target.dataset.auto;
+    if (e.target.name === 'mvp' || e.target.name === 'mvp_kills') mvpTouched = true;
+    update();
   });
-  form.addEventListener('input', update);
   update();
   $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
   form.addEventListener('submit', guard(async e => {
@@ -341,7 +447,12 @@ async function showResults(m) {
       .filter(r => r.placement);
     const places = data.map(r => r.placement);
     if (new Set(places).size !== places.length) throw new Error('Two teams have the same placement.');
-    await api.saveResults(m.id, data);
+    let mvp = null;
+    if (form.mvp.value) {
+      const [regId, ...ign] = form.mvp.value.split('|');
+      mvp = { registration_id: Number(regId), ign: ign.join('|'), kills: Number(form.mvp_kills.value || 0) };
+    }
+    await api.saveResults(m.id, data, mvp);
     $('#msg').innerHTML = '<p class="success">Saved. Results are now live on the Results page.</p>';
   }));
 }

@@ -1,6 +1,6 @@
-import { api, PLAYERS_PER_MODE, registrationOpen } from '../api.js';
+import { api, PLAYERS_PER_MODE, registrationOpen, regCloseMinutes, CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen } from '../ui.js';
 
 initShell('home');
 
@@ -41,12 +41,13 @@ function registerForm(m, notice = '', current = null) {
       <h3>${current ? `Edit slot #${current.slot_no}` : 'Register'}</h3>
       ${notice}
       ${!current && m.entry_fee > 0 ? `<p class="meta">Entry fee ₹${m.entry_fee}, paid by UPI. After you register, your slot is held for 15 minutes while you pay.</p>` : ''}
+      ${!current && m.filled >= m.max_slots ? `<p class="meta">All ${m.max_slots} slots are taken. Join the waitlist: if a team cancels or doesn’t check in, the next team on the waitlist gets their slot automatically.</p>` : ''}
       ${m.mode === 'solo' ? '' : `<label>Team name<input name="team_name" required minlength="2" maxlength="30" value="${esc(current?.team_name || '')}"></label>`}
       ${current ? '' : `<label>WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number" placeholder="10-digit number"></label>
       <p class="meta">Your number is only visible to organizers. Room details will show on this phone.</p>`}
       ${players}
       <div class="actions">
-        <button class="btn btn-primary" type="submit">${current ? 'Save changes' : m.entry_fee > 0 ? 'Register & hold slot' : 'Register'}</button>
+        <button class="btn btn-primary" type="submit">${current ? 'Save changes' : m.filled >= m.max_slots ? 'Join waitlist' : m.entry_fee > 0 ? 'Register & hold slot' : 'Register'}</button>
         ${current ? '<button class="btn" type="button" id="edit-cancel">Back</button>' : ''}
       </div>
       <div id="register-msg" role="status"></div>
@@ -118,8 +119,17 @@ function regPanel(m, reg) {
   if (!reg) return '';
   if (reg.status === 'confirmed') {
     return `<div class="panel"><strong class="success">You’re registered — slot #${reg.slot_no}${reg.team_name ? `, ${esc(reg.team_name)}` : ''}.</strong>
-      <span class="meta">Room details appear on this page before the match. Share them only with your team.</span>
+      ${m.checkin_required ? checkinHtml(m, reg) : '<span class="meta">Room details appear on this page before the match. Share them only with your team.</span>'}
       ${teamActions(m, reg)}</div>`;
+  }
+  if (reg.status === 'waitlist') {
+    return `<div class="panel"><strong>You’re #${reg.waitlist_position} on the waitlist${reg.team_name ? ` (${esc(reg.team_name)})` : ''}.</strong>
+      <p class="meta">If a team cancels${m.checkin_required ? ' or doesn’t check in' : ''}, the next team on the waitlist gets their slot automatically. Keep this page open or check back before the match.</p>
+      <button type="button" class="btn btn-small" id="recheck">Check again</button>${teamActions(m, reg)}</div>`;
+  }
+  if (reg.status === 'released') {
+    return `<div class="panel"><strong class="error">Your slot was released because your team didn’t check in before ${esc(fmtTime(checkinTimes(m).closes))} IST.</strong>
+      <span class="meta">It went to the next team on the waitlist.</span></div>`;
   }
   if (reg.status === 'rejected') {
     return `<div class="panel"><strong class="error">Your registration (slot #${reg.slot_no}) was not accepted.</strong>
@@ -131,6 +141,26 @@ function regPanel(m, reg) {
       <button type="button" class="btn btn-small" id="recheck">Check again</button>${teamActions(m, reg)}</div>`;
   }
   return payPanel(m, reg) + teamActions(m, reg);
+}
+
+function checkinTimes(m) {
+  const start = Date.parse(m.starts_at);
+  return {
+    opens: new Date(start - CHECKIN_OPENS_MIN * 60e3).toISOString(),
+    closes: new Date(start - CHECKIN_CLOSES_MIN * 60e3).toISOString(),
+  };
+}
+
+function checkinHtml(m, reg) {
+  const { opens, closes } = checkinTimes(m);
+  if (reg.checked_in_at) {
+    return '<p class="success">✓ Checked in. Room details appear on this page before the match. Share them only with your team.</p>';
+  }
+  if (Date.now() < Date.parse(opens)) {
+    return `<p class="meta"><strong>Check-in required:</strong> come back between ${esc(fmtTime(opens))} and ${esc(fmtTime(closes))} IST and tap “Check in”, or your slot goes to the waitlist.</p>`;
+  }
+  return `<p><strong>Check in now</strong> <span class="meta">(closes ${esc(fmtTime(closes))} IST, in <span id="ci-cd">${countdown(closes)}</span>)</span></p>
+    <button type="button" class="btn btn-primary" id="check-in">Check in</button> <span id="ci-msg"></span>`;
 }
 
 async function myRegistration() {
@@ -147,7 +177,14 @@ async function myRegistration() {
 }
 
 async function render() {
-  const m = await api.getMatch(id);
+  // Everything in one round trip; results and room are simply empty when not relevant.
+  const [m, teams, results, room, [saved, reg]] = await Promise.all([
+    api.getMatch(id),
+    api.listRegistrations(id),
+    api.getResults(id),
+    api.getRoom(id, loadSaved()?.token),
+    myRegistration(),
+  ]);
   if (!m) {
     el.innerHTML = '<h1>Match not found</h1><p><a href="index.html">See all matches</a></p>';
     return;
@@ -156,18 +193,15 @@ async function render() {
   const [label, tone] = statusLabel(m);
   const started = Date.parse(m.starts_at) <= Date.now();
   const regOpen = registrationOpen(m);
-  const canRegister = regOpen && m.filled < m.max_slots;
-  const closesAt = new Date(Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3).toISOString();
+  const canRegister = regOpen && (m.filled < m.max_slots || waitlistOpen(m));
+  const closesAt = new Date(Date.parse(m.starts_at) - regCloseMinutes(m) * 60e3).toISOString();
   const done = m.status === 'completed';
-  const [teams, results, room, [saved, reg]] = await Promise.all([
-    api.listRegistrations(id),
-    done ? api.getResults(id) : [],
-    done ? null : api.getRoom(id, loadSaved()?.token),
-    myRegistration(),
-  ]);
   const expired = reg === 'expired';
   const mine = expired ? null : reg;
-  const shareText = `${m.title} (${MODE[m.mode]}, ${m.map}, ${feeLabel(m)}) — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)} IST. Register here: ${location.href}`;
+  const shareText = `${m.title} (${MODE[m.mode]}, ${m.map}, ${feeLabel(m)}${prizeShort(m) ? `, ${prizeShort(m)}` : ''}) — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)} IST. Register here: ${location.href}`;
+  const prizeFacts = hasPrizes(m)
+    ? prizeLines(m).map(l => { const [k, v] = l.split(' '); return `<div class="fact"><span>${k} prize</span><strong>${v}</strong></div>`; }).join('')
+    : `<div class="fact"><span>Prize pool</span><strong>${esc(m.prize_pool || '–')}</strong></div>`;
 
   el.innerHTML = `
     <p class="meta"><a href="index.html">← All matches</a></p>
@@ -178,19 +212,21 @@ async function render() {
       <div class="fact"><span>Mode</span><strong>${MODE[m.mode]}</strong></div>
       <div class="fact"><span>Map</span><strong>${esc(m.map)}</strong></div>
       <div class="fact"><span>Entry</span><strong>${m.entry_fee > 0 ? `₹${m.entry_fee}` : 'Free'}</strong></div>
-      <div class="fact"><span>Prize pool</span><strong>${esc(m.prize_pool || '–')}</strong></div>
-      <div class="fact"><span>Per kill</span><strong>${esc(m.per_kill || '–')}</strong></div>
-      <div class="fact"><span>Slots</span><strong>${m.filled}/${m.max_slots}</strong></div>
+      ${prizeFacts}
+      ${m.per_kill ? `<div class="fact"><span>Per kill</span><strong>${esc(m.per_kill)}</strong></div>` : ''}
+      <div class="fact"><span>Slots</span><strong>${m.filled}/${m.max_slots}${m.waitlist && !done ? ` <span class="meta">+${m.waitlist} waiting</span>` : ''}</strong></div>
     </div>
-    ${done ? `<h2>Results</h2>${resultsTable(results)}` : ''}
-    ${room ? `<div class="panel" id="room">${roomHtml(room, mine)}</div>` : ''}
+    ${m.checkin_required && !done ? `<p class="meta">Check-in required: confirmed teams must check in on this page between ${esc(fmtTime(checkinTimes(m).opens))} and ${esc(fmtTime(checkinTimes(m).closes))} IST.</p>` : ''}
+    ${done ? `<h2>Results</h2>${mvpLine(m)}${resultsTable(results)}` : ''}
+    ${room ? `<div class="panel" id="room">${roomHtml(room, mine, m)}</div>` : ''}
     <div id="mine">${regPanel(m, mine)}</div>
     ${canRegister && !mine ? registerForm(m, expired ? '<p class="error">Your 15-minute payment window ended, so the slot was released. You can register again.</p>' : '') : ''}
     ${!mine && !done && m.status !== 'cancelled' ? findForm() : ''}
     <div class="actions"><a class="btn" href="${shareLink(shareText)}" target="_blank" rel="noopener">Share on WhatsApp</a></div>
     ${m.rules ? `<h2>Rules</h2><p class="rules">${esc(m.rules)}</p>` : ''}
     <h2>Registered ${unit(m.mode, 2)} (${teams.length})</h2>
-    ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}`;
+    ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}${m.checkin_required && t.checked_in ? ' <span class="success" title="Checked in">✓</span>' : ''}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}
+    ${m.waitlist && !done ? `<p class="meta">${m.waitlist} team(s) on the waitlist.</p>` : ''}`;
 
   $('#register')?.addEventListener('submit', e => submit(e, m));
   $('#find')?.addEventListener('submit', e => find(e, m));
@@ -210,6 +246,16 @@ async function render() {
     }
   });
   $('#utr-form')?.addEventListener('submit', e => submitUtr(e, saved));
+  $('#check-in')?.addEventListener('click', async e => {
+    e.target.disabled = true;
+    try {
+      await api.checkIn(saved.token);
+      await render();
+    } catch (err) {
+      showError($('#ci-msg'), err);
+      e.target.disabled = false;
+    }
+  });
   $('#recheck')?.addEventListener('click', () => render().catch(err => showError(el, err)));
   el.querySelectorAll('[data-copy]').forEach(b => b.addEventListener('click', async () => {
     try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; } catch { /* ignore */ }
@@ -230,13 +276,16 @@ async function drawQr(box, text) {
   }
 }
 
-function roomHtml(room, mine) {
+function roomHtml(room, mine, m) {
   if (room.room_id) {
     return `<h3>Room details</h3><div class="room">
       <div><span class="meta">Room ID</span><br><strong>${esc(room.room_id)}</strong></div>
       <div><span class="meta">Password</span><br><strong>${esc(room.room_pass)}</strong></div></div>`;
   }
   const left = countdown(room.reveal_at);
+  if (mine?.status === 'confirmed' && m.checkin_required && !mine.checked_in_at) {
+    return `<h3>Room details</h3><p class="meta">Check in first. After check-in the room shows here from ${esc(fmtTime(room.reveal_at))} IST.</p>`;
+  }
   if (mine?.status === 'confirmed') {
     return `<h3>Room details</h3><p class="meta">Shown here at ${esc(fmtTime(room.reveal_at))} IST${left ? ` (in <span id="room-cd">${left}</span>)` : ''}.</p>`;
   }
@@ -244,15 +293,26 @@ function roomHtml(room, mine) {
 }
 
 let timer;
+let renderedAt = 0;
+const ACTIVE_TEAM = ['confirmed', 'waitlist'];
 function tick(m, room, mine) {
   clearInterval(timer);
+  renderedAt = Date.now();
   timer = setInterval(() => {
     const rerender = () => { clearInterval(timer); render().catch(err => showError(el, err)); };
     const cd = $('#cd');
     if (cd) cd.textContent = countdown(m.starts_at) || 'now';
-    if (room && !room.room_id && mine?.status === 'confirmed') {
+    const canSeeRoom = mine?.status === 'confirmed' && (!m.checkin_required || mine.checked_in_at);
+    if (room && !room.room_id && canSeeRoom) {
       const left = countdown(room.reveal_at);
       if (left) { const rc = $('#room-cd'); if (rc) rc.textContent = left; } else return rerender();
+    }
+    // Re-render when check-in opens or closes, so the button appears or the slot settles.
+    if (m.checkin_required && ACTIVE_TEAM.includes(mine?.status)) {
+      const { opens, closes } = checkinTimes(m);
+      if ([opens, closes].some(t => renderedAt < Date.parse(t) && Date.parse(t) <= Date.now())) return rerender();
+      const ci = $('#ci-cd');
+      if (ci) ci.textContent = countdown(closes) || 'now';
     }
     const hold = $('#hold-cd');
     if (hold && mine?.hold_until) {

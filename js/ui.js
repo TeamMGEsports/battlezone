@@ -1,6 +1,6 @@
 // Shared helpers for all pages.
 import { CONFIG } from './config.js';
-import { isDemo } from './api.js';
+import { isDemo, WAITLIST_MAX, registrationOpen } from './api.js';
 
 export const $ = (sel, ctx = document) => ctx.querySelector(sel);
 
@@ -31,13 +31,23 @@ export function countdown(iso) {
 
 export const feeLabel = m => m.entry_fee > 0 ? `₹${m.entry_fee} entry` : 'Free entry';
 
+// Prizes: 1st/2nd/3rd/MVP amounts when set, otherwise the older free-text prize pool.
+export const hasPrizes = m => [m.prize_1, m.prize_2, m.prize_3, m.prize_mvp].some(v => v > 0);
+export const prizeTotal = m => (m.prize_1 || 0) + (m.prize_2 || 0) + (m.prize_3 || 0) + (m.prize_mvp || 0);
+export function prizeLines(m) {
+  return [['1st', m.prize_1], ['2nd', m.prize_2], ['3rd', m.prize_3], ['MVP', m.prize_mvp]]
+    .filter(([, v]) => v > 0).map(([k, v]) => `${k} ₹${v}`);
+}
+export const prizeShort = m => hasPrizes(m) ? `Prizes ₹${prizeTotal(m)}` : m.prize_pool ? `Prize ${m.prize_pool}` : '';
+export const waitlistOpen = m => !(m.entry_fee > 0) && (m.waitlist || 0) < WAITLIST_MAX;
+
 export const MODE = { solo: 'Solo', duo: 'Duo', squad: 'Squad' };
 export const unit = (mode, n) => mode === 'solo' ? (n === 1 ? 'player' : 'players') : (n === 1 ? 'team' : 'teams');
 
 export function statusLabel(m) {
   if (m.status === 'open' && Date.parse(m.starts_at) <= Date.now()) return ['Started', 'muted'];
-  if (m.status === 'open' && m.filled >= m.max_slots) return ['Full', 'muted'];
-  if (m.status === 'open' && Date.now() >= Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3) return ['Reg. closed', 'muted'];
+  if (m.status === 'open' && m.filled >= m.max_slots) return waitlistOpen(m) ? ['Waitlist', 'muted'] : ['Full', 'muted'];
+  if (m.status === 'open' && !registrationOpen(m)) return ['Reg. closed', 'muted'];
   return {
     open: ['Open', 'ok'], closed: ['Closed', 'muted'], live: ['Live', 'live'],
     completed: ['Completed', 'muted'], cancelled: ['Cancelled', 'muted'],
@@ -55,9 +65,9 @@ export function matchRow(m) {
       </div>
       <div class="match-body">
         <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span></div>
-        <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${m.prize_pool ? ` · Prize ${esc(m.prize_pool)}` : ''}</div>
+        <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}</div>
         <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
-        <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}</div>
+        <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}${m.waitlist ? ` · ${m.waitlist} on waitlist` : ''}</div>
       </div>
     </a>`;
 }
@@ -75,6 +85,11 @@ export function resultsTable(rows, { showPrize = true } = {}) {
         </tr>`).join('')}
       </tbody>
     </table></div>`;
+}
+
+export function mvpLine(m) {
+  if (!m.mvp_ign) return '';
+  return `<p class="mvp"><span class="tag tag-ok">MVP</span> <strong>${esc(m.mvp_ign)}</strong>${m.mvp_team ? ` <span class="meta">(${esc(m.mvp_team)})</span>` : ''} · ${m.mvp_kills ?? 0} kills${m.prize_mvp ? ` · ₹${m.prize_mvp}` : ''}</p>`;
 }
 
 export function shareLink(text) {
