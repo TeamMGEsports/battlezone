@@ -52,9 +52,18 @@ const remote = {
       .select('*').eq('match_id', matchId).order('slot_no'));
   },
   async register(matchId, { team_name, phone, players }) {
-    return unwrap(await (await sb()).rpc('register_team', {
+    const res = unwrap(await (await sb()).rpc('register_team', {
       p_match_id: matchId, p_team_name: team_name, p_phone: phone, p_players: players,
     }));
+    // Before migration 002 the database returns just the slot number.
+    return typeof res === 'number' ? { slot: res, status: 'confirmed' } : res;
+  },
+  async submitUtr(token, utr) {
+    unwrap(await (await sb()).rpc('submit_utr', { p_token: token, p_utr: utr }));
+  },
+  async registrationStatus(token) {
+    const rows = unwrap(await (await sb()).rpc('registration_status', { p_token: token }));
+    return rows[0] || null;
   },
   async getRoom(matchId) {
     const rows = unwrap(await (await sb()).rpc('get_room', { p_match_id: matchId }));
@@ -118,7 +127,8 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v1';
+const DEMO_KEY = 'tmg-demo-v2';
+const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
   const day = new Date(Date.now() + dayOffset * 864e5)
@@ -140,6 +150,8 @@ function seed() {
     registrations: [],
     results: [],
   };
+  db.matches.forEach(m => { m.entry_fee = 0; });
+  db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: '₹800', per_kill: '₹10', rules, status: 'open', entry_fee: 20 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];
   let bgmi = 5100000000;
   for (const matchId of [1, 4]) {
@@ -147,7 +159,7 @@ function seed() {
       const id = ++db.seq;
       db.registrations.push({
         id, match_id: matchId, slot_no: i + 1, team_name: name, phone: `98765${String(43210 + i)}`,
-        status: 'confirmed', created_at: new Date().toISOString(),
+        status: 'confirmed', created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, hold_until: null,
         players: [1, 2, 3, 4].map(n => ({ ign: `${name.split(' ')[0]}${n}`, bgmi_id: String(bgmi++) })),
       });
       if (matchId === 4) {
@@ -173,7 +185,10 @@ function persist() {
 }
 
 const confirmed = matchId => db.registrations.filter(r => r.match_id === matchId && r.status === 'confirmed');
-const withFilled = m => ({ ...m, filled: confirmed(m.id).length });
+const holdsSlot = r => r.status === 'confirmed'
+  || (r.status === 'pending' && (r.utr || Date.parse(r.hold_until) > Date.now()));
+const active = matchId => db.registrations.filter(r => r.match_id === matchId && holdsSlot(r));
+const withFilled = m => ({ ...m, filled: active(m.id).length });
 const withPoints = x => ({ ...x, points: placementPoints(x.placement) + x.kills });
 const clone = v => JSON.parse(JSON.stringify(v));
 let demoAdmin = false;
@@ -210,7 +225,9 @@ const demo = {
     team_name = team_name.trim();
     if (team_name.length < 2 || team_name.length > 30) throw new Error('Team name must be 2–30 characters');
     if (!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Enter a valid 10-digit WhatsApp number');
-    if (confirmed(matchId).length >= m.max_slots) throw new Error('All slots are full');
+    db.registrations = db.registrations.filter(r =>
+      !(r.match_id === matchId && r.status === 'pending' && !r.utr && Date.parse(r.hold_until) <= Date.now()));
+    if (active(matchId).length >= m.max_slots) throw new Error('All slots are full');
     for (const p of players) {
       if (!p.ign.trim() || !/^[0-9]{6,12}$/.test(p.bgmi_id)) throw new Error('Each player needs an in-game name and a valid BGMI ID');
     }
@@ -221,12 +238,31 @@ const demo = {
       throw new Error('This team name, phone number or BGMI ID is already registered for this match');
     }
     const slot_no = Math.max(0, ...all.map(r => r.slot_no)) + 1;
-    db.registrations.push({
-      id: ++db.seq, match_id: matchId, slot_no, team_name, phone, status: 'confirmed',
-      created_at: new Date().toISOString(), players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
-    });
+    const paid = m.entry_fee > 0;
+    const reg = {
+      id: ++db.seq, match_id: matchId, slot_no, team_name, phone, status: paid ? 'pending' : 'confirmed',
+      created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null,
+      hold_until: paid ? new Date(Date.now() + HOLD_MS).toISOString() : null,
+      players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
+    };
+    db.registrations.push(reg);
     persist();
-    return slot_no;
+    return { slot: slot_no, token: reg.pay_token, fee: m.entry_fee, status: reg.status };
+  },
+  async submitUtr(token, utr) {
+    const r = db.registrations.find(x => x.pay_token === token);
+    if (!r) throw new Error('Registration not found. Please register again.');
+    if (r.status !== 'pending') throw new Error(`This registration is already ${r.status}`);
+    if (!r.utr && Date.parse(r.hold_until) <= Date.now()) throw new Error('Your 15-minute payment window has ended. Please register again.');
+    utr = utr.trim();
+    if (!/^[0-9]{12}$/.test(utr)) throw new Error('UTR / transaction ID must be 12 digits');
+    if (db.registrations.some(x => x.utr === utr && x !== r)) throw new Error('This UTR has already been used');
+    r.utr = utr;
+    persist();
+  },
+  async registrationStatus(token) {
+    const r = db.registrations.find(x => x.pay_token === token);
+    return r ? clone({ match_id: r.match_id, slot_no: r.slot_no, status: r.status, utr: r.utr, hold_until: r.hold_until }) : null;
   },
   async getRoom(matchId) {
     const m = db.matches.find(x => x.id === matchId);

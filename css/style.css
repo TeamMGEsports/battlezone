@@ -129,3 +129,11 @@ ol.teams li { break-inside: avoid; padding: .15rem 0; }
   th, td { padding: .5rem; }
   .hide-sm { display: none; }
 }
+
+/* UPI payment */
+.mono { font-family: ui-monospace, Menlo, monospace; }
+.pay { display: flex; gap: 1rem; align-items: flex-start; flex-wrap: wrap; margin: .75rem 0 1rem; }
+.pay-qr { width: 168px; padding: 8px; background: #fff; border-radius: 8px; flex: none; }
+.pay-qr svg { display: block; width: 100%; height: auto; }
+.pay-info { flex: 1; min-width: 200px; }
+.pay-info p { margin: .75rem 0 0; }

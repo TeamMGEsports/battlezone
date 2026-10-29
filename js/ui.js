@@ -29,6 +29,8 @@ export function countdown(iso) {
   return h ? `${h}h ${m}m` : `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
+export const feeLabel = m => m.entry_fee > 0 ? `₹${m.entry_fee} entry` : 'Free entry';
+
 export const MODE = { solo: 'Solo', duo: 'Duo', squad: 'Squad' };
 export const unit = (mode, n) => mode === 'solo' ? (n === 1 ? 'player' : 'players') : (n === 1 ? 'team' : 'teams');
 
@@ -52,7 +54,7 @@ export function matchRow(m) {
       </div>
       <div class="match-body">
         <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span></div>
-        <div class="meta">${MODE[m.mode]} · ${esc(m.map)}${m.prize_pool ? ` · ${esc(m.prize_pool)}` : ''}</div>
+        <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${m.prize_pool ? ` · Prize ${esc(m.prize_pool)}` : ''}</div>
         <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
         <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}</div>
       </div>
