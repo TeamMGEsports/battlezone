@@ -21,7 +21,7 @@ Until Supabase is connected, the site runs on sample data stored in your own bro
 ## Going live with Supabase (one-time, about 10 minutes)
 
 1. Create a free project at [supabase.com](https://supabase.com). Choose the Mumbai region.
-2. Open **SQL Editor → New query**, paste all of `supabase/schema.sql` and click **Run**.
+2. Open **SQL Editor → New query**, paste all of `supabase/schema.sql` and click **Run**. Then do the same with each file in `supabase/migrations/`, in order.
 3. Turn off public sign-ups: **Authentication → Sign In / Providers → Allow new users to sign up: off**.
 4. Add each organizer: **Authentication → Users → Add user** (email and password). Copy the user's UID and run in the SQL Editor:
    ```sql
@@ -36,6 +36,23 @@ Until Supabase is connected, the site runs on sample data stored in your own bro
 2. Share the match link in the WhatsApp group (there is a share button on every match page).
 3. **Teams** shows phone numbers and BGMI IDs, lets you remove fake entries, and copies the slot list for WhatsApp.
 4. After the match, **Results**: enter placement and kills from the end screen. Points are calculated automatically, and the match is marked completed.
+
+## Paid matches (optional, UPI)
+
+Every match has an **Entry fee** field. Leave it at 0 for free matches (they work exactly as before). Set an amount to turn on UPI payment for that match:
+
+1. The player registers, and their slot is held for 15 minutes.
+2. They pay with the "Pay with UPI app" button, by scanning the QR code, or by paying your UPI ID manually. The payment note is `MG<match>-S<slot>`.
+3. They enter the 12-digit UTR (UPI reference number) from their payment app.
+4. In **Admin → Teams**, check each UTR against your UPI app and tap **Confirm** or **Reject**.
+
+Unpaid holds expire after 15 minutes and free up the slot. Each UTR can only be used once.
+
+**One-time setup:**
+1. Run `supabase/migrations/002_paid_entry.sql` in the Supabase SQL Editor.
+2. Put your UPI ID in `upiId` in `js/config.js`. A free UPI business ID (PhonePe Business, Paytm for Business, Google Pay for Business) works best, because some apps limit pay links to personal UPI IDs.
+
+Check the legal position for paid entry and cash prizes in India before using this.
 
 ## Points
 

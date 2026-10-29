@@ -1,5 +1,6 @@
 import { api, isDemo, placementPoints, resetDemo } from '../api.js';
-import { $, esc, initShell, dayLabel, fmtTime, MODE, statusLabel, showError } from '../ui.js';
+import { CONFIG } from '../config.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError } from '../ui.js';
 
 initShell('admin');
 
@@ -68,7 +69,7 @@ async function showList() {
       <tbody>${matches.map(m => `
         <tr>
           <td>${esc(dayLabel(m.starts_at))}<br><span class="meta">${esc(fmtTime(m.starts_at))}</span></td>
-          <td>${esc(m.title)}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)}</span></td>
+          <td>${esc(m.title)}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}</span></td>
           <td>${m.filled}/${m.max_slots}</td>
           <td>${statusLabel(m)[0]}</td>
           <td><div class="actions">
@@ -117,7 +118,11 @@ async function showEditor(m, template, dayShift = 0) {
         <label>Prize pool<input name="prize_pool" value="${esc(src.prize_pool || '')}" placeholder="₹500"></label>
         <label>Per kill<input name="per_kill" value="${esc(src.per_kill || '')}" placeholder="₹10"></label>
       </div>
-      <label>Status<select name="status">${options(STATUSES, m ? m.status : 'open', v => v[0].toUpperCase() + v.slice(1))}</select></label>
+      <div class="row">
+        <label>Entry fee in ₹ (0 = free)<input name="entry_fee" type="number" min="0" max="10000" required value="${src.entry_fee ?? 0}"></label>
+        <label>Status<select name="status">${options(STATUSES, m ? m.status : 'open', v => v[0].toUpperCase() + v.slice(1))}</select></label>
+      </div>
+      ${CONFIG.upiId ? '' : '<p class="meta">Paid matches need your UPI ID in js/config.js before players can pay.</p>'}
       <label>Rules<textarea name="rules">${esc(src.rules ?? DEFAULT_RULES)}</textarea></label>
       <fieldset>
         <legend>Room (hidden from players until reveal time)</legend>
@@ -147,7 +152,7 @@ async function showEditor(m, template, dayShift = 0) {
       title: f.title.value.trim(), mode: f.mode.value, map: f.map.value,
       starts_at: fromInput(f.starts_at.value), max_slots: Number(f.max_slots.value),
       prize_pool: f.prize_pool.value.trim() || null, per_kill: f.per_kill.value.trim() || null,
-      status: f.status.value, rules: f.rules.value.trim() || null,
+      status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
     }, {
       room_id: f.room_id.value.trim() || null, room_pass: f.room_pass.value.trim() || null,
       reveal_minutes: Number(f.reveal_minutes.value || 15),
@@ -157,26 +162,42 @@ async function showEditor(m, template, dayShift = 0) {
 }
 
 // ---------- registrations ----------
+function regState(r) {
+  if (r.status !== 'pending') return r.status === 'confirmed' ? ['Confirmed', 'ok'] : ['Removed', 'muted'];
+  if (r.utr) return ['Paid? check UTR', 'live'];
+  const left = countdown(r.hold_until);
+  return left ? [`Awaiting payment (${left})`, 'muted'] : ['Hold expired', 'muted'];
+}
+
 async function showTeams(m) {
   const regs = await api.adminRegistrations(m.id);
   const ok = regs.filter(r => r.status === 'confirmed');
+  const toCheck = regs.filter(r => r.status === 'pending' && r.utr).length;
   const listText = `${m.title} — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)}\n` +
     ok.map(r => `${r.slot_no}. ${r.team_name}`).join('\n');
+  const button = (r, to, text) => `<button class="btn btn-small" data-id="${r.id}" data-to="${to}">${text}</button>`;
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
-    <h1>${esc(m.title)}: ${ok.length}/${m.max_slots} registered</h1>
+    <h1>${esc(m.title)}: ${ok.length}/${m.max_slots} confirmed</h1>
+    ${m.entry_fee > 0 ? `<p class="lead">₹${m.entry_fee} entry. ${toCheck ? `<strong>${toCheck} payment(s) to check.</strong> ` : ''}Match each UTR against your UPI app before confirming.</p>` : ''}
     <div class="actions" style="margin-bottom:1rem"><button class="btn" id="copy">Copy slot list for WhatsApp</button></div>
     <div id="msg"></div>
     <div class="table-wrap"><table>
-      <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th><th>WhatsApp</th><th></th></tr></thead>
-      <tbody>${regs.map(r => `
+      <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th><th>WhatsApp</th>${m.entry_fee > 0 ? '<th>Payment</th>' : ''}<th></th></tr></thead>
+      <tbody>${regs.map(r => {
+        const [state, tone] = regState(r);
+        return `
         <tr${r.status === 'rejected' ? ' style="opacity:.5"' : ''}>
           <td>${r.slot_no}</td><td>${esc(r.team_name)}</td>
           <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta">${esc(p.bgmi_id)}</span>`).join('<br>')}</td>
           <td><a href="https://wa.me/91${esc(r.phone)}" target="_blank" rel="noopener">${esc(r.phone)}</a></td>
-          <td><button class="btn btn-small" data-id="${r.id}" data-to="${r.status === 'confirmed' ? 'rejected' : 'confirmed'}">
-            ${r.status === 'confirmed' ? 'Remove' : 'Restore'}</button></td>
-        </tr>`).join('') || '<tr><td colspan="5" class="empty">No registrations yet.</td></tr>'}
+          ${m.entry_fee > 0 ? `<td><span class="tag tag-${tone}">${state}</span>${r.utr ? `<br><span class="mono">${esc(r.utr)}</span>` : ''}</td>` : ''}
+          <td><div class="actions">
+            ${r.status === 'pending' && r.utr ? button(r, 'confirmed', 'Confirm') : ''}
+            ${r.status === 'rejected' ? button(r, m.entry_fee > 0 && !r.utr ? 'pending' : 'confirmed', 'Restore') : button(r, 'rejected', r.status === 'pending' ? 'Reject' : 'Remove')}
+          </div></td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" class="empty">No registrations yet.</td></tr>'}
       </tbody>
     </table></div>`;
   $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
