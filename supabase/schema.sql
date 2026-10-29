@@ -217,8 +217,12 @@ create policy admin_all on registrations        for all to authenticated using (
 create policy admin_all on registration_players for all to authenticated using (is_admin()) with check (is_admin());
 create policy admin_all on results              for all to authenticated using (is_admin()) with check (is_admin());
 
+-- Explicit grants, so this works with "Automatically expose new tables" off.
+-- Signed-in users get table access, but the policies above limit it to admins.
 revoke all on matches, match_rooms, registrations, registration_players, results, admins from anon;
+grant select, insert, update, delete on matches, match_rooms, registrations, registration_players, results to authenticated;
 grant select on matches_public, registrations_public, results_public to anon, authenticated;
+grant execute on function placement_points(int) to authenticated;
 revoke execute on function register_team(bigint, text, text, jsonb) from public;
 revoke execute on function get_room(bigint) from public;
 revoke execute on function leaderboard(timestamptz, text) from public;
