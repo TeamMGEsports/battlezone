@@ -1,49 +1,61 @@
-# BattleZone 🎮 — Free BGMI & PUBG Tournaments
+# TeamMG Esports — BGMI matches
 
-A clean, mobile-first tournament website for Indian gamers. Zero entry fee, real prize money.
+A minimal site for free nightly BGMI matches: schedule, online registration, room details at match time, results and a leaderboard. Hosted free on GitHub Pages, data stored free on Supabase.
 
-## Features
-- 🎯 Tournament cards with countdown timers
-- 🔒 Room ID & Password locked until 15 min before match
-- 📲 One-tap WhatsApp registration
-- 🏆 Results & points table
-- 🎮 Filter by Solo / Duo / Squad / Game
-- 📱 Mobile-first design (dark esports theme)
-- ⚡ No frameworks, no build steps, pure HTML/CSS/JS
-- 💰 Free hosting on GitHub Pages
+## Pages
 
-## Quick Start
+| Page | What it does |
+|---|---|
+| `index.html` | Upcoming matches with slots filled |
+| `match.html?id=…` | Match details, registration form, registered teams, room ID/password (shown only near start time), results |
+| `results.html` | Weekly / 30-day / all-time leaderboard and past match results |
+| `rules.html` | General rules and points table |
+| `admin.html` | Organizer sign-in: create matches, manage teams, enter results |
 
-1. Fork/clone this repo
-2. Edit `js/data.js` — update `SITE_CONFIG` with your WhatsApp links
-3. Push to GitHub
-4. Enable GitHub Pages: Settings → Pages → Source: main branch
-5. Share `https://yourusername.github.io/battlezone` in your WhatsApp group!
+No build step. Plain HTML, CSS and JavaScript modules.
 
-## File Structure
+## Demo mode
+
+Until Supabase is connected, the site runs on sample data stored in your own browser. Any email and password works on the admin page. Nothing is shared between visitors in demo mode.
+
+## Going live with Supabase (one-time, about 10 minutes)
+
+1. Create a free project at [supabase.com](https://supabase.com). Choose the Mumbai region.
+2. Open **SQL Editor → New query**, paste all of `supabase/schema.sql` and click **Run**.
+3. Turn off public sign-ups: **Authentication → Sign In / Providers → Allow new users to sign up: off**.
+4. Add each organizer: **Authentication → Users → Add user** (email and password). Copy the user's UID and run in the SQL Editor:
+   ```sql
+   insert into admins (user_id) values ('paste-the-uid-here');
+   ```
+5. Copy **Project URL** and the **anon public** key from **Project Settings → API** into `js/config.js`. Both are safe to publish. The database rules decide who can see what.
+6. Commit and push. GitHub Pages updates in a minute or two.
+
+## Running the nightly matches
+
+1. **Admin → New match** (or **Copy +1 day** on yesterday's match). Add the room ID and password whenever you have them; players only see them 15 minutes before start.
+2. Share the match link in the WhatsApp group (there is a share button on every match page).
+3. **Teams** shows phone numbers and BGMI IDs, lets you remove fake entries, and copies the slot list for WhatsApp.
+4. After the match, **Results**: enter placement and kills from the end screen. Points are calculated automatically, and the match is marked completed.
+
+## Points
+
+Placement points + 1 per kill. 1st 10, 2nd 6, 3rd 5, 4th 4, 5th 3, 6th 2, 7th–8th 1.
+To change them, edit `placement_points()` in `supabase/schema.sql` (and re-run it in Supabase) and `placementPoints()` in `js/api.js`.
+
+## Privacy & safety
+
+- Phone numbers and BGMI IDs are only readable by organizers.
+- Room details are only returned by the database once the reveal time has passed, so they are never in the page source early.
+- Registration checks run in the database: slot limit, one entry per phone, team name and BGMI ID per match.
+
+## Files
+
 ```
-├── index.html          # Main site
-├── admin.html          # Admin guide (how to update tournaments)
-├── css/
-│   └── style.css       # All styles
-├── js/
-│   ├── data.js         # ⭐ Tournament data — EDIT THIS FILE
-│   └── app.js          # App logic
-└── README.md
+index.html  match.html  results.html  rules.html  admin.html
+css/style.css
+js/config.js        site name, WhatsApp link, Supabase keys
+js/api.js           all data access (Supabase or demo)
+js/ui.js            shared formatting helpers
+js/pages/*.js       one script per page
+supabase/schema.sql database tables, security rules and functions
 ```
-
-## How to Add a Tournament
-1. Open `js/data.js` on GitHub (click ✏️ pencil icon)
-2. Copy an existing tournament block
-3. Change the details
-4. Commit — site updates in 1-2 minutes
-
-## How to Post Results
-1. Change `status` from `"upcoming"` to `"completed"`
-2. Fill in the `results` array
-3. Commit
-
-See `admin.html` for detailed instructions and templates.
-
-## License
-Free to use. Made with ❤️ for the Indian gaming community.
