@@ -137,3 +137,11 @@ ol.teams li { break-inside: avoid; padding: .15rem 0; }
 .pay-qr svg { display: block; width: 100%; height: auto; }
 .pay-info { flex: 1; min-width: 200px; }
 .pay-info p { margin: .75rem 0 0; }
+
+/* team list & find form */
+ul.teams { list-style: none; padding: 0; margin: 0; columns: 2; column-gap: 2rem; font-size: .9rem; }
+ul.teams li { break-inside: avoid; padding: .2rem 0; }
+ul.teams .slot { display: inline-block; min-width: 2.5rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (max-width: 480px) { ul.teams { columns: 1; } }
+details.find summary { cursor: pointer; font-weight: 500; }
+details.find[open] summary { margin-bottom: .75rem; }

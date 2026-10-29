@@ -14,6 +14,19 @@ export const PLAYERS_PER_MODE = { solo: 1, duo: 2, squad: 4 };
 const ACTIVE = ['open', 'closed', 'live'];
 const RECENT_MS = 3 * 3600e3; // keep a started match on the home page for 3 hours
 
+// A random id kept in this browser, used to allow one registration per device per match.
+export function deviceId() {
+  try {
+    let id = localStorage.getItem('tmg-device');
+    if (!id) localStorage.setItem('tmg-device', id = crypto.randomUUID());
+    return id;
+  } catch { return null; }
+}
+
+export function registrationOpen(m) {
+  return m.status === 'open' && Date.now() < Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3;
+}
+
 // ---------------------------------------------------------------
 // Supabase
 // ---------------------------------------------------------------
@@ -53,7 +66,7 @@ const remote = {
   },
   async register(matchId, { team_name, phone, players }) {
     const res = unwrap(await (await sb()).rpc('register_team', {
-      p_match_id: matchId, p_team_name: team_name, p_phone: phone, p_players: players,
+      p_match_id: matchId, p_team_name: team_name, p_phone: phone, p_players: players, p_device: deviceId(),
     }));
     // Before migration 002 the database returns just the slot number.
     return typeof res === 'number' ? { slot: res, status: 'confirmed' } : res;
@@ -65,9 +78,18 @@ const remote = {
     const rows = unwrap(await (await sb()).rpc('registration_status', { p_token: token }));
     return rows[0] || null;
   },
-  async getRoom(matchId) {
-    const rows = unwrap(await (await sb()).rpc('get_room', { p_match_id: matchId }));
+  async getRoom(matchId, token) {
+    const rows = unwrap(await (await sb()).rpc('get_room', { p_match_id: matchId, p_token: token || null }));
     return rows[0] || null;
+  },
+  async editRegistration(token, { team_name, players }) {
+    unwrap(await (await sb()).rpc('edit_registration', { p_token: token, p_team_name: team_name, p_players: players }));
+  },
+  async cancelRegistration(token) {
+    unwrap(await (await sb()).rpc('cancel_registration', { p_token: token }));
+  },
+  async findRegistration(matchId, phone, bgmiId) {
+    return unwrap(await (await sb()).rpc('find_registration', { p_match_id: matchId, p_phone: phone, p_bgmi_id: bgmiId }));
   },
   async getResults(matchId) {
     return unwrap(await (await sb()).from('results_public')
@@ -113,6 +135,15 @@ const remote = {
   async setRegistrationStatus(id, status) {
     unwrap(await (await sb()).from('registrations').update({ status }).eq('id', id));
   },
+  async listBans() {
+    return unwrap(await (await sb()).from('bans').select('*').order('created_at', { ascending: false }));
+  },
+  async addBans(entries) {
+    unwrap(await (await sb()).from('bans').upsert(entries, { onConflict: 'kind,value', ignoreDuplicates: true }));
+  },
+  async removeBan(id) {
+    unwrap(await (await sb()).from('bans').delete().eq('id', id));
+  },
   async saveResults(matchId, rows) {
     const c = await sb();
     unwrap(await c.from('results').delete().eq('match_id', matchId));
@@ -127,7 +158,7 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v2';
+const DEMO_KEY = 'tmg-demo-v3';
 const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
@@ -149,9 +180,10 @@ function seed() {
     rooms: { 1: { room_id: '4821937', room_pass: 'mg21', reveal_minutes: 15 } },
     registrations: [],
     results: [],
+    bans: [],
   };
-  db.matches.forEach(m => { m.entry_fee = 0; });
-  db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: '₹800', per_kill: '₹10', rules, status: 'open', entry_fee: 20 });
+  db.matches.forEach(m => { m.entry_fee = 0; m.reg_close_minutes = 30; });
+  db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: '₹800', per_kill: '₹10', rules, status: 'open', entry_fee: 20, reg_close_minutes: 30 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];
   let bgmi = 5100000000;
   for (const matchId of [1, 4]) {
@@ -191,6 +223,31 @@ const active = matchId => db.registrations.filter(r => r.match_id === matchId &&
 const withFilled = m => ({ ...m, filled: active(m.id).length });
 const withPoints = x => ({ ...x, points: placementPoints(x.placement) + x.kills });
 const clone = v => JSON.parse(JSON.stringify(v));
+
+// Same checks as check_team() and the unique rules in the database.
+function checkTeam(m, team_name, players) {
+  const needed = PLAYERS_PER_MODE[m.mode];
+  if (players.length !== needed) throw new Error(`This match needs ${needed} player(s)`);
+  team_name = team_name.trim();
+  if (team_name.length < 2 || team_name.length > 30) throw new Error('Team name must be 2–30 characters');
+  for (const p of players) {
+    if (!p.ign.trim() || !/^[0-9]{6,12}$/.test(p.bgmi_id)) throw new Error('Each player needs an in-game name and a valid BGMI ID');
+    if (db.bans.some(b => b.kind === 'bgmi_id' && b.value === p.bgmi_id)) throw new Error(`BGMI ID ${p.bgmi_id} is not allowed to register. Contact the organizers.`);
+  }
+  return team_name;
+}
+function checkDuplicates(others, team_name, players) {
+  if (others.some(r => r.team_name.toLowerCase() === team_name.toLowerCase())) throw new Error('This team name is already taken for this match');
+  const ids = new Set(others.flatMap(r => r.players.map(p => p.bgmi_id)));
+  if (new Set(players.map(p => p.bgmi_id)).size !== players.length || players.some(p => ids.has(p.bgmi_id))) {
+    throw new Error('One of these BGMI IDs is already registered for this match');
+  }
+}
+function ownRegistration(token) {
+  const r = db.registrations.find(x => x.pay_token === token);
+  if (!r || !['pending', 'confirmed'].includes(r.status)) throw new Error('Registration not found');
+  return r;
+}
 let demoAdmin = false;
 
 const demo = {
@@ -213,41 +270,59 @@ const demo = {
   },
   async listRegistrations(matchId) {
     return clone(confirmed(matchId).map(r => ({
-      id: r.id, match_id: r.match_id, slot_no: r.slot_no, team_name: r.team_name, igns: r.players.map(p => p.ign),
+      id: r.id, match_id: r.match_id, slot_no: r.slot_no, team_name: r.team_name, igns: [],
     })));
   },
   async register(matchId, { team_name, phone, players }) {
     const m = db.matches.find(x => x.id === matchId);
     if (!m) throw new Error('Match not found');
-    if (m.status !== 'open' || Date.now() >= Date.parse(m.starts_at)) throw new Error('Registration is closed for this match');
-    const needed = PLAYERS_PER_MODE[m.mode];
-    if (players.length !== needed) throw new Error(`This match needs ${needed} player(s)`);
-    team_name = team_name.trim();
-    if (team_name.length < 2 || team_name.length > 30) throw new Error('Team name must be 2–30 characters');
+    if (!registrationOpen(m)) throw new Error('Registration is closed for this match');
+    team_name = checkTeam(m, team_name, players);
     if (!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Enter a valid 10-digit WhatsApp number');
+    if (db.bans.some(b => b.kind === 'phone' && b.value === phone)) throw new Error('This number is not allowed to register. Contact the organizers.');
     db.registrations = db.registrations.filter(r =>
       !(r.match_id === matchId && r.status === 'pending' && !r.utr && Date.parse(r.hold_until) <= Date.now()));
     if (active(matchId).length >= m.max_slots) throw new Error('All slots are full');
-    for (const p of players) {
-      if (!p.ign.trim() || !/^[0-9]{6,12}$/.test(p.bgmi_id)) throw new Error('Each player needs an in-game name and a valid BGMI ID');
-    }
+    const device = deviceId();
     const all = db.registrations.filter(r => r.match_id === matchId);
-    const ids = new Set(all.flatMap(r => r.players.map(p => p.bgmi_id)));
-    if (all.some(r => r.phone === phone || r.team_name.toLowerCase() === team_name.toLowerCase())
-      || players.some(p => ids.has(p.bgmi_id))) {
-      throw new Error('This team name, phone number or BGMI ID is already registered for this match');
-    }
+    if (device && all.some(r => r.device_id === device)) throw new Error('This phone has already registered a team for this match');
+    if (all.some(r => r.phone === phone)) throw new Error('This WhatsApp number is already registered for this match');
+    checkDuplicates(all, team_name, players);
     const slot_no = Math.max(0, ...all.map(r => r.slot_no)) + 1;
     const paid = m.entry_fee > 0;
     const reg = {
       id: ++db.seq, match_id: matchId, slot_no, team_name, phone, status: paid ? 'pending' : 'confirmed',
-      created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null,
+      created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: device,
       hold_until: paid ? new Date(Date.now() + HOLD_MS).toISOString() : null,
       players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
     };
     db.registrations.push(reg);
     persist();
     return { slot: slot_no, token: reg.pay_token, fee: m.entry_fee, status: reg.status };
+  },
+  async editRegistration(token, { team_name, players }) {
+    const r = ownRegistration(token);
+    const m = db.matches.find(x => x.id === r.match_id);
+    if (!registrationOpen(m)) throw new Error('Registration has closed, so changes are locked. Contact the organizers.');
+    team_name = checkTeam(m, team_name, players);
+    checkDuplicates(db.registrations.filter(x => x.match_id === r.match_id && x !== r), team_name, players);
+    r.team_name = team_name;
+    r.players = players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id }));
+    persist();
+  },
+  async cancelRegistration(token) {
+    const r = ownRegistration(token);
+    const m = db.matches.find(x => x.id === r.match_id);
+    if (!registrationOpen(m)) throw new Error('Registration has closed. Contact the organizers to cancel.');
+    if (r.status === 'confirmed' && m.entry_fee > 0) throw new Error('Paid registrations can only be cancelled by the organizers');
+    db.registrations = db.registrations.filter(x => x !== r);
+    persist();
+  },
+  async findRegistration(matchId, phone, bgmiId) {
+    const r = db.registrations.find(x => x.match_id === matchId && x.phone === phone.trim()
+      && ['pending', 'confirmed'].includes(x.status) && x.players.some(p => p.bgmi_id === bgmiId.trim()));
+    if (!r) throw new Error('No registration found with that WhatsApp number and BGMI ID');
+    return r.pay_token;
   },
   async submitUtr(token, utr) {
     const r = db.registrations.find(x => x.pay_token === token);
@@ -262,15 +337,19 @@ const demo = {
   },
   async registrationStatus(token) {
     const r = db.registrations.find(x => x.pay_token === token);
-    return r ? clone({ match_id: r.match_id, slot_no: r.slot_no, status: r.status, utr: r.utr, hold_until: r.hold_until }) : null;
+    return r ? clone({
+      match_id: r.match_id, slot_no: r.slot_no, status: r.status, utr: r.utr, hold_until: r.hold_until,
+      team_name: r.team_name, players: r.players,
+    }) : null;
   },
-  async getRoom(matchId) {
+  async getRoom(matchId, token) {
     const m = db.matches.find(x => x.id === matchId);
     const r = db.rooms[matchId];
     if (!m || !r || !ACTIVE.includes(m.status)) return null;
     const revealAt = Date.parse(m.starts_at) - r.reveal_minutes * 60e3;
-    const open = Date.now() >= revealAt;
-    return { room_id: open ? r.room_id : null, room_pass: open ? r.room_pass : null, reveal_at: new Date(revealAt).toISOString() };
+    const ok = Date.now() >= revealAt
+      && db.registrations.some(x => x.match_id === matchId && x.pay_token === token && x.status === 'confirmed');
+    return { room_id: ok ? r.room_id : null, room_pass: ok ? r.room_pass : null, reveal_at: new Date(revealAt).toISOString() };
   },
   async getResults(matchId) {
     return clone(db.results.filter(x => x.match_id === matchId).map(x => {
@@ -324,6 +403,19 @@ const demo = {
   },
   async setRegistrationStatus(id, status) {
     db.registrations.find(r => r.id === id).status = status;
+    persist();
+  },
+  async listBans() { return clone(db.bans); },
+  async addBans(entries) {
+    for (const e of entries) {
+      if (!db.bans.some(b => b.kind === e.kind && b.value === e.value)) {
+        db.bans.unshift({ id: ++db.seq, created_at: new Date().toISOString(), reason: null, ...e });
+      }
+    }
+    persist();
+  },
+  async removeBan(id) {
+    db.bans = db.bans.filter(b => b.id !== id);
     persist();
   },
   async saveResults(matchId, rows) {

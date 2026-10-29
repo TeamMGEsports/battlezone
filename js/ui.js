@@ -37,6 +37,7 @@ export const unit = (mode, n) => mode === 'solo' ? (n === 1 ? 'player' : 'player
 export function statusLabel(m) {
   if (m.status === 'open' && Date.parse(m.starts_at) <= Date.now()) return ['Started', 'muted'];
   if (m.status === 'open' && m.filled >= m.max_slots) return ['Full', 'muted'];
+  if (m.status === 'open' && Date.now() >= Date.parse(m.starts_at) - (m.reg_close_minutes ?? 30) * 60e3) return ['Reg. closed', 'muted'];
   return {
     open: ['Open', 'ok'], closed: ['Closed', 'muted'], live: ['Live', 'live'],
     completed: ['Completed', 'muted'], cancelled: ['Cancelled', 'muted'],

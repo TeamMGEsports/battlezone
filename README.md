@@ -54,6 +54,19 @@ Unpaid holds expire after 15 minutes and free up the slot. Each UTR can only be 
 
 Check the legal position for paid entry and cash prizes in India before using this.
 
+## Fair play
+
+- **Room details** go only to confirmed teams, on the phone they registered with. Teammates can see them on their own phone with **Find my registration** (captain's WhatsApp number + their own BGMI ID). Post "room is open" in WhatsApp, not the ID and password.
+- **Admin → Room check** lists slot → team → players and BGMI IDs. Before starting, compare the room lobby with it and remove anyone who isn't listed or is in the wrong slot.
+- **Registration closes** 30 minutes before start by default (changeable per match). Until then captains can edit or cancel their team. Paid, confirmed teams can only be cancelled by organizers.
+- **One registration per phone per match**, plus unique WhatsApp number, team name and BGMI IDs.
+- **Bans:** Admin → Teams → **Ban** blocks a team's WhatsApp number and BGMI IDs from all matches. Manage them in Admin → **Bans**.
+- The public team list shows only slot number and team name.
+
+## Undoing an update
+
+Each database update in `supabase/migrations/` has a matching `_rollback.sql`. To undo one: click **Revert** on the merged pull request on GitHub, merge the revert, then run the rollback file in the Supabase SQL Editor. No match, team or result data is lost.
+
 ## Points
 
 Placement points + 1 per kill. 1st 10, 2nd 6, 3rd 5, 4th 4, 5th 3, 6th 2, 7th–8th 1.
