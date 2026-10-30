@@ -87,9 +87,10 @@ const remote = {
     return unwrap(await (await sb()).from('registrations_public')
       .select('*').eq('match_id', matchId).order('slot_no'));
   },
-  async register(matchId, { team_name, phone, players }) {
+  async register(matchId, { team_name, phone, players, yt_handle }) {
     const res = unwrap(await (await sb()).rpc('register_team', {
       p_match_id: matchId, p_team_name: team_name, p_phone: phone, p_players: players, p_device: deviceId(),
+      ...(yt_handle ? { p_yt_handle: yt_handle } : {}),
     }));
     // Before migration 002 the database returns just the slot number.
     return typeof res === 'number' ? { slot: res, status: 'confirmed' } : res;
@@ -188,7 +189,7 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v4';
+const DEMO_KEY = 'tmg-demo-v5';
 const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
@@ -217,6 +218,7 @@ function seed() {
     prize_1: 250, prize_2: 150, prize_3: 75, prize_mvp: 50, prize_pool: null, per_kill: null,
   }));
   Object.assign(db.matches[0], { checkin_required: true });
+  db.matches.push({ id: 6, title: 'Subscriber Squad Cup', mode: 'squad', map: 'Erangel', starts_at: istAt(1, '20:00'), max_slots: 20, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 0, reg_close_minutes: 30, checkin_required: false, prize_1: 500, prize_2: 300, prize_3: 150, prize_mvp: 100, subscriber_only: true });
   db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 20, reg_close_minutes: 30, checkin_required: false, prize_1: 400, prize_2: 200, prize_3: 100, prize_mvp: 100 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];
   let bgmi = 5100000000;
@@ -253,8 +255,9 @@ function persist() {
 }
 
 const confirmed = matchId => db.registrations.filter(r => r.match_id === matchId && r.status === 'confirmed');
+// Pending with no deadline = waiting for YouTube verification, keeps its slot.
 const holdsSlot = r => r.status === 'confirmed'
-  || (r.status === 'pending' && (r.utr || Date.parse(r.hold_until) > Date.now()));
+  || (r.status === 'pending' && (r.utr || !r.hold_until || Date.parse(r.hold_until) > Date.now()));
 const active = matchId => db.registrations.filter(r => r.match_id === matchId && holdsSlot(r));
 const withFilled = m => {
   const r = db.registrations.find(x => x.id === m.mvp_registration_id);
@@ -292,9 +295,13 @@ function ownRegistration(token) {
 }
 // Same as the assign_slot() trigger: lowest free number when a team gets a place.
 function setStatus(r, status) {
+  const m = db.matches.find(x => x.id === r.match_id);
+  // Confirmed by an organizer after check-in closed: counts as checked in.
+  if (status === 'confirmed' && r.status === 'pending' && m.checkin_required && Date.now() >= checkinCloses(m)) {
+    r.checked_in_at ||= new Date().toISOString();
+  }
   if (['pending', 'confirmed'].includes(status)) {
     if (r.slot_no == null) {
-      const m = db.matches.find(x => x.id === r.match_id);
       const taken = new Set(db.registrations.filter(x => x.match_id === r.match_id && x !== r).map(x => x.slot_no));
       const free = Array.from({ length: m.max_slots }, (_, i) => i + 1).find(n => !taken.has(n));
       if (!free) throw new Error('All slots are full');
@@ -320,7 +327,7 @@ function settle(matchId) {
   if (!(m.entry_fee > 0) && Date.now() < Date.parse(m.starts_at)) {
     for (const w of db.registrations.filter(r => r.match_id === matchId && r.status === 'waitlist')) {
       if (active(matchId).length >= m.max_slots) break;
-      setStatus(w, 'confirmed');
+      setStatus(w, m.subscriber_only ? 'pending' : 'confirmed');
       w.checked_in_at = closed ? new Date().toISOString() : null;
     }
   }
@@ -352,7 +359,7 @@ const demo = {
       id: r.id, match_id: r.match_id, slot_no: r.slot_no, team_name: r.team_name, igns: [], checked_in: !!r.checked_in_at,
     })));
   },
-  async register(matchId, { team_name, phone, players }) {
+  async register(matchId, { team_name, phone, players, yt_handle }) {
     settle(matchId);
     const m = db.matches.find(x => x.id === matchId);
     if (!m) throw new Error('Match not found');
@@ -360,8 +367,14 @@ const demo = {
     team_name = checkTeam(m, team_name, players);
     if (!/^[6-9][0-9]{9}$/.test(phone)) throw new Error('Enter a valid 10-digit WhatsApp number');
     if (db.bans.some(b => b.kind === 'phone' && b.value === phone)) throw new Error('This number is not allowed to register. Contact the organizers.');
+    if (m.subscriber_only) {
+      yt_handle = (yt_handle || '').trim();
+      if (!/^@[A-Za-z0-9._-]{3,30}$/.test(yt_handle)) throw new Error('Enter the captain\'s YouTube handle, like @yourname');
+    } else {
+      yt_handle = null;
+    }
     const paid = m.entry_fee > 0;
-    let status = paid ? 'pending' : 'confirmed';
+    let status = paid || m.subscriber_only ? 'pending' : 'confirmed';
     if (active(matchId).length >= m.max_slots) {
       if (paid) throw new Error('All slots are full');
       if (db.registrations.filter(r => r.match_id === matchId && r.status === 'waitlist').length >= WAITLIST_MAX) {
@@ -374,10 +387,13 @@ const demo = {
     if (device && all.some(r => r.device_id === device)) throw new Error('This phone has already registered a team for this match');
     if (all.some(r => r.phone === phone)) throw new Error('This WhatsApp number is already registered for this match');
     checkDuplicates(all, team_name, players);
+    if (yt_handle && all.some(r => r.yt_handle?.toLowerCase() === yt_handle.toLowerCase())) {
+      throw new Error('This YouTube handle is already registered for this match');
+    }
     const reg = {
       id: ++db.seq, match_id: matchId, slot_no: null, team_name, phone, status: null,
       created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: device,
-      hold_until: status === 'pending' ? new Date(Date.now() + HOLD_MS).toISOString() : null, checked_in_at: null,
+      hold_until: status === 'pending' && paid ? new Date(Date.now() + HOLD_MS).toISOString() : null, checked_in_at: null, yt_handle,
       players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
     };
     setStatus(reg, status);
@@ -443,7 +459,7 @@ const demo = {
     return clone({
       match_id: r.match_id, slot_no: r.slot_no, status: r.status, utr: r.utr, hold_until: r.hold_until,
       team_name: r.team_name, players: r.players, checked_in_at: r.checked_in_at ?? null,
-      waitlist_position: r.status === 'waitlist' ? queue.indexOf(r) + 1 : null,
+      waitlist_position: r.status === 'waitlist' ? queue.indexOf(r) + 1 : null, yt_handle: r.yt_handle ?? null,
     });
   },
   async getRoom(matchId, token) {

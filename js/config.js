@@ -8,6 +8,8 @@ export const CONFIG = {
   // works best: some apps limit pay links to personal UPI IDs.
   upiId: '***@ybl', // placeholder: replace with your real UPI ID before the first paid match
   upiName: 'TeamMG Esports',
+  // YouTube channel for subscriber-only matches (full link, e.g. https://www.youtube.com/@teammg).
+  youtubeChannel: '',
   supabaseUrl: 'https://jbhjgzagntyniuvwgbhg.supabase.co',
   supabaseAnonKey: 'sb_publishable_CfcEqORa54NJwkttWImcsg_yONFBsjm',
 };
