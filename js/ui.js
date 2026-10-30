@@ -39,6 +39,14 @@ export function prizeLines(m) {
     .filter(([, v]) => v > 0).map(([k, v]) => `${k} ₹${v}`);
 }
 export const prizeShort = m => hasPrizes(m) ? `Prizes ₹${prizeTotal(m)}` : m.prize_pool ? `Prize ${m.prize_pool}` : '';
+// Accepts "@name", "name" or a youtube.com/@name link and returns "@name".
+export function ytHandle(input) {
+  const v = (input || '').trim().replace(/^https?:\/\/(www\.|m\.)?youtube\.com\//i, '').split(/[/?#]/)[0];
+  return v ? (v.startsWith('@') ? v : `@${v}`) : '';
+}
+export const ytLink = handle => `https://www.youtube.com/${encodeURIComponent(handle).replace('%40', '@')}`;
+export const subBadge = '<span class="tag tag-yt">Subscribers only</span>';
+
 export const waitlistOpen = m => !(m.entry_fee > 0) && (m.waitlist || 0) < WAITLIST_MAX;
 
 export const MODE = { solo: 'Solo', duo: 'Duo', squad: 'Squad' };
@@ -58,13 +66,13 @@ export function matchRow(m) {
   const [label, tone] = statusLabel(m);
   const pct = Math.min(100, Math.round(m.filled / m.max_slots * 100));
   return `
-    <a class="match" href="match.html?id=${m.id}">
+    <a class="match${m.subscriber_only ? ' match-sub' : ''}" href="match.html?id=${m.id}">
       <div class="match-time">
         <span class="match-day">${esc(dayLabel(m.starts_at))}</span>
         <strong>${esc(fmtTime(m.starts_at))}</strong>
       </div>
       <div class="match-body">
-        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span></div>
+        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</div>
         <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}</div>
         <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
         <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}${m.waitlist ? ` · ${m.waitlist} on waitlist` : ''}</div>

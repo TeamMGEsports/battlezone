@@ -1,6 +1,6 @@
 import { api, PLAYERS_PER_MODE, registrationOpen, regCloseMinutes, CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge } from '../ui.js';
 
 initShell('home');
 
@@ -42,6 +42,9 @@ function registerForm(m, notice = '', current = null) {
       ${notice}
       ${!current && m.entry_fee > 0 ? `<p class="meta">Entry fee ₹${m.entry_fee}, paid by UPI. After you register, your slot is held for 15 minutes while you pay.</p>` : ''}
       ${!current && m.filled >= m.max_slots ? `<p class="meta">All ${m.max_slots} slots are taken. Join the waitlist: if a team cancels or doesn’t check in, the next team on the waitlist gets their slot automatically.</p>` : ''}
+      ${m.subscriber_only && !current ? `
+      <label>Captain’s YouTube handle<input name="yt_handle" required placeholder="@yourname" autocomplete="off" maxlength="80"></label>
+      <p class="meta">Must be subscribed to ${channelLink()}. Keep your subscriptions public until we verify: YouTube → Settings → Privacy → turn off “Keep all my subscriptions private”.</p>` : ''}
       ${m.mode === 'solo' ? '' : `<label>Team name<input name="team_name" required minlength="2" maxlength="30" value="${esc(current?.team_name || '')}"></label>`}
       ${current ? '' : `<label>WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number" placeholder="10-digit number"></label>
       <p class="meta">Your number is only visible to organizers. Room details will show on this phone.</p>`}
@@ -52,6 +55,20 @@ function registerForm(m, notice = '', current = null) {
       </div>
       <div id="register-msg" role="status"></div>
     </form>`;
+}
+
+function channelLink() {
+  return CONFIG.youtubeChannel
+    ? `<a href="${esc(CONFIG.youtubeChannel)}" target="_blank" rel="noopener">our YouTube channel</a>`
+    : 'our YouTube channel';
+}
+
+function subscriberBanner(m) {
+  return `<div class="panel yt-banner">
+    <strong>Subscribers-only match</strong>
+    <p class="meta">Only for subscribers of ${channelLink()}. Register with the captain’s YouTube handle, then we verify the subscription and confirm your slot.</p>
+    ${CONFIG.youtubeChannel ? `<a class="btn btn-yt" href="${esc(CONFIG.youtubeChannel)}" target="_blank" rel="noopener">Subscribe on YouTube</a>` : ''}
+  </div>`;
 }
 
 function findForm() {
@@ -135,6 +152,11 @@ function regPanel(m, reg) {
     return `<div class="panel"><strong class="error">Your registration (slot #${reg.slot_no}) was not accepted.</strong>
       <span class="meta">If you think this is a mistake, message the organizers in the WhatsApp group.</span></div>`;
   }
+  if (reg.status === 'pending' && !(m.entry_fee > 0)) {
+    return `<div class="panel"><strong>Slot #${reg.slot_no} is held: waiting for YouTube verification.</strong>
+      <p class="meta">We’ll check that <a href="${esc(ytLink(reg.yt_handle || ''))}" target="_blank" rel="noopener">${esc(reg.yt_handle || 'your channel')}</a> is subscribed to ${channelLink()}, then confirm your slot. Keep your subscriptions public until then.</p>
+      <button type="button" class="btn btn-small" id="recheck">Check again</button>${teamActions(m, reg)}</div>`;
+  }
   if (reg.utr) {
     return `<div class="panel"><strong>Payment submitted for slot #${reg.slot_no}.</strong>
       <p class="meta">UTR ${esc(reg.utr)}. Waiting for an organizer to confirm it.</p>
@@ -169,7 +191,7 @@ async function myRegistration() {
   if (!saved.token) { save(null); return [null, null]; } // older save without a token: use "Find my registration"
   const reg = await api.registrationStatus(saved.token);
   if (!reg) { save(null); return [null, null]; }
-  if (reg.status === 'pending' && !reg.utr && !countdown(reg.hold_until)) {
+  if (reg.status === 'pending' && !reg.utr && reg.hold_until && !countdown(reg.hold_until)) {
     save(null);
     return [null, 'expired'];
   }
@@ -205,7 +227,7 @@ async function render() {
 
   el.innerHTML = `
     <p class="meta"><a href="index.html">← All matches</a></p>
-    <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span></h1>
+    <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</h1>
     <p class="lead">${esc(dayLabel(m.starts_at))}, ${esc(fmtTime(m.starts_at))} IST${!started && !done ? ` · starts in <span id="cd">${countdown(m.starts_at)}</span>` : ''}
       ${m.status === 'open' && !started ? `<br><span class="meta">Registration ${regOpen ? 'closes' : 'closed'} at ${esc(fmtTime(closesAt))} IST.</span>` : ''}</p>
     <div class="facts">
@@ -216,6 +238,7 @@ async function render() {
       ${m.per_kill ? `<div class="fact"><span>Per kill</span><strong>${esc(m.per_kill)}</strong></div>` : ''}
       <div class="fact"><span>Slots</span><strong>${m.filled}/${m.max_slots}${m.waitlist && !done ? ` <span class="meta">+${m.waitlist} waiting</span>` : ''}</strong></div>
     </div>
+    ${m.subscriber_only && !done ? subscriberBanner(m) : ''}
     ${m.checkin_required && !done ? `<p class="meta">Check-in required: confirmed teams must check in on this page between ${esc(fmtTime(checkinTimes(m).opens))} and ${esc(fmtTime(checkinTimes(m).closes))} IST.</p>` : ''}
     ${done ? `<h2>Results</h2>${mvpLine(m)}${resultsTable(results)}` : ''}
     ${room ? `<div class="panel" id="room">${roomHtml(room, mine, m)}</div>` : ''}
@@ -341,6 +364,7 @@ async function submit(e, m) {
       team_name: m.mode === 'solo' ? players[0].ign : form.team_name.value,
       phone: form.phone.value.trim(),
       players,
+      yt_handle: m.subscriber_only ? ytHandle(form.yt_handle.value) : undefined,
     });
     save({ slot: res.slot, token: res.token });
     await render();

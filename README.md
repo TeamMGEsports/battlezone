@@ -71,6 +71,18 @@ Check the legal position for paid entry and cash prizes in India before using th
 - **Waitlist (free matches):** when slots are full, up to 10 teams can join the waitlist. A cancelled, removed or no-show slot goes to the next team automatically, keeping the same slot number. Admins can also tap **Give slot**.
 - **WhatsApp posts:** Admin → **WhatsApp** on a match gives ready messages for registration open, check-in open, room open and results. **Post: tonight** and **Post: weekly top 10** are at the top of the matches list.
 
+## Subscriber-only matches (YouTube)
+
+Tick **Subscribers only** when creating a match. It's pinned to the top of the home page with a red glow and a "Subscribers only" badge.
+
+1. The captain registers with their YouTube handle (they can paste their channel link; it becomes `@handle`). The slot is held as "waiting for verification".
+2. In **Admin → Teams**, open each handle's channel → **Subscriptions**, or check **YouTube Studio → Subscribers**. Tap **Verify ✓** or **Reject**.
+3. Players must keep their subscriptions public until verified (YouTube → Settings → Privacy).
+
+A YouTube handle can only be used once per match. Waitlisted teams that get a slot also wait for verification. Teams verified after check-in closes count as checked in.
+
+**One-time setup:** run `supabase/migrations/005_subscriber_matches.sql`, and put your channel link in `youtubeChannel` in `js/config.js` so players get a **Subscribe on YouTube** button.
+
 ## Undoing an update
 
 Each database update in `supabase/migrations/` has a matching `_rollback.sql`. To undo one: click **Revert** on the merged pull request on GitHub, merge the revert, then run the rollback file in the Supabase SQL Editor. No match, team or result data is lost.

@@ -1,7 +1,7 @@
 import { api, isDemo, placementPoints, resetDemo } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, ytLink, subBadge } from '../ui.js';
 
 initShell('admin');
 
@@ -73,7 +73,7 @@ async function showList() {
       <tbody>${matches.map(m => `
         <tr>
           <td>${esc(dayLabel(m.starts_at))}<br><span class="meta">${esc(fmtTime(m.starts_at))}</span></td>
-          <td>${esc(m.title)}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}</span></td>
+          <td>${esc(m.title)}${m.subscriber_only ? ` ${subBadge}` : ''}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}</span></td>
           <td>${m.filled}/${m.max_slots}${m.waitlist ? `<br><span class="meta">+${m.waitlist} waiting</span>` : ''}</td>
           <td>${statusLabel(m)[0]}</td>
           <td><div class="actions">
@@ -153,6 +153,9 @@ async function showEditor(m, template, dayShift = 0) {
       </div>
       ${CONFIG.upiId ? '' : '<p class="meta">Paid matches need your UPI ID in js/config.js before players can pay.</p>'}
       <label>Registration closes this many minutes before start<input name="reg_close_minutes" type="number" min="0" max="600" required value="${src.reg_close_minutes ?? 30}"></label>
+      <label class="check"><input type="checkbox" name="subscriber_only"${src.subscriber_only ? ' checked' : ''}>
+        Subscribers only (YouTube). The captain gives their YouTube handle and you verify it before the slot is confirmed. The match is pinned to the top with a glow.</label>
+      ${CONFIG.youtubeChannel ? '' : '<p class="meta">Add your channel link as youtubeChannel in js/config.js so players get a Subscribe button.</p>'}
       <label class="check"><input type="checkbox" name="checkin_required"${src.checkin_required ? ' checked' : ''}>
         Require check-in (60 to 20 minutes before start). Teams that don’t check in lose their slot to the waitlist.</label>
       <label>Rules<textarea name="rules">${esc(src.rules ?? DEFAULT_RULES)}</textarea></label>
@@ -191,6 +194,7 @@ async function showEditor(m, template, dayShift = 0) {
       per_kill: f.per_kill.value.trim() || null,
       ...prizes, prize_pool: hasPrizes(prizes) ? null : src.prize_pool ?? null,
       checkin_required: f.checkin_required.checked,
+      subscriber_only: f.subscriber_only.checked,
       status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
       reg_close_minutes: Number(f.reg_close_minutes.value || 0),
     }, {
@@ -208,6 +212,7 @@ function regState(r) {
   if (r.status === 'released') return ['No check-in', 'muted'];
   if (r.status === 'rejected') return ['Removed', 'muted'];
   if (r.utr) return ['Paid? check UTR', 'live'];
+  if (!r.hold_until) return ['Verify YouTube', 'live'];
   const left = countdown(r.hold_until);
   return left ? [`Awaiting payment (${left})`, 'muted'] : ['Hold expired', 'muted'];
 }
@@ -216,12 +221,14 @@ async function showTeams(m) {
   const regs = await api.adminRegistrations(m.id);
   const ok = regs.filter(r => r.status === 'confirmed');
   const toCheck = regs.filter(r => r.status === 'pending' && r.utr).length;
+  const toVerify = regs.filter(r => r.status === 'pending' && r.yt_handle && !(m.entry_fee > 0)).length;
   const listText = `${m.title} — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)}\n` +
     ok.sort((a, b) => a.slot_no - b.slot_no).map(r => `${r.slot_no}. ${r.team_name}`).join('\n');
   const button = (r, to, text) => `<button class="btn btn-small" data-id="${r.id}" data-to="${to}">${text}</button>`;
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
     <h1>${esc(m.title)}: ${ok.length}/${m.max_slots} confirmed</h1>
+    ${m.subscriber_only ? `<p class="lead">Subscribers only. ${toVerify ? `<strong>${toVerify} team(s) to verify.</strong> ` : ''}Open each handle → <em>Subscriptions</em> tab, or check YouTube Studio → Subscribers, then tap <strong>Verify ✓</strong> or <strong>Reject</strong>.</p>` : ''}
     ${m.entry_fee > 0 ? `<p class="lead">₹${m.entry_fee} entry. ${toCheck ? `<strong>${toCheck} payment(s) to check.</strong> ` : ''}Match each UTR against your UPI app before confirming.</p>` : ''}
     <div class="actions" style="margin-bottom:1rem"><button class="btn" id="copy">Copy slot list for WhatsApp</button></div>
     <div id="msg"></div>
@@ -231,13 +238,14 @@ async function showTeams(m) {
         const [state, tone] = regState(r);
         return `
         <tr${['rejected', 'released'].includes(r.status) ? ' style="opacity:.5"' : ''}>
-          <td>${r.slot_no ?? '–'}</td><td>${esc(r.team_name)}</td>
+          <td>${r.slot_no ?? '–'}</td><td>${esc(r.team_name)}${r.yt_handle ? `<br><a href="${esc(ytLink(r.yt_handle))}" target="_blank" rel="noopener">${esc(r.yt_handle)}</a>` : ''}</td>
           <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta">${esc(p.bgmi_id)}</span>`).join('<br>')}</td>
           <td><a href="https://wa.me/91${esc(r.phone)}" target="_blank" rel="noopener">${esc(r.phone)}</a></td>
           <td><span class="tag tag-${tone}">${state}</span>${r.utr ? `<br><span class="mono">${esc(r.utr)}</span>` : ''}
             ${m.checkin_required && r.status === 'confirmed' ? `<br><span class="meta">${r.checked_in_at ? '✓ checked in' : 'not checked in'}</span>` : ''}</td>
           <td><div class="actions">
             ${r.status === 'pending' && r.utr ? button(r, 'confirmed', 'Confirm') : ''}
+            ${r.status === 'pending' && !r.utr && r.yt_handle && !(m.entry_fee > 0) ? button(r, 'confirmed', 'Verify ✓') : ''}
             ${r.status === 'waitlist' ? button(r, 'confirmed', 'Give slot') : ''}
             ${['rejected', 'released'].includes(r.status) ? button(r, m.entry_fee > 0 && !r.utr ? 'pending' : 'confirmed', 'Restore') : button(r, 'rejected', r.status === 'pending' ? 'Reject' : 'Remove')}
             <button class="btn btn-small" data-ban="${r.id}">Ban</button>
@@ -283,7 +291,7 @@ async function showRoomCheck(m) {
     <div class="table-wrap"><table>
       <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th></tr></thead>
       <tbody>${regs.map(r => `
-        <tr><td><strong>${r.slot_no}</strong></td><td>${esc(r.team_name)}</td>
+        <tr><td><strong>${r.slot_no}</strong></td><td>${esc(r.team_name)}${r.yt_handle ? `<br><span class="meta">${esc(r.yt_handle)}</span>` : ''}</td>
         <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta mono">${esc(p.bgmi_id)}</span>`).join('<br>')}</td></tr>`).join('')
         || '<tr><td colspan="3" class="empty">No confirmed teams.</td></tr>'}
       </tbody>

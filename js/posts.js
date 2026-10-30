@@ -11,6 +11,7 @@ const prizeText = m => hasPrizes(m) ? prizeLines(m).join(' · ') : m.prize_pool 
 export function registrationPost(m) {
   return [
     `🎮 *${m.title}*: ${MODE[m.mode]} · ${m.map}`,
+    m.subscriber_only ? `🔴 *YouTube subscribers only*${CONFIG.youtubeChannel ? `: subscribe ${CONFIG.youtubeChannel}` : ''}. Register with the captain’s YouTube handle.` : null,
     `🕘 ${dayLabel(m.starts_at)}, ${fmtTime(m.starts_at)} IST`,
     `💰 Entry: ${m.entry_fee > 0 ? `₹${m.entry_fee}` : 'Free'}`,
     prizeText(m) ? `🏆 ${prizeText(m)}` : null,

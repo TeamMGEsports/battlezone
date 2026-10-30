@@ -149,3 +149,19 @@ details.find[open] summary { margin-bottom: .75rem; }
 label.check { display: flex; gap: .5rem; align-items: flex-start; font-weight: 400; }
 label.check input { width: auto; margin-top: .25rem; }
 textarea.post { font-family: inherit; font-size: .9rem; margin-bottom: .5rem; }
+
+/* Subscriber-only matches: YouTube red glow */
+:root { --yt: #e11d2a; --yt-glow: rgba(225, 29, 42, .28); }
+@media (prefers-color-scheme: dark) { :root { --yt: #ff4d57; --yt-glow: rgba(255, 77, 87, .32); } }
+.tag-yt { color: var(--yt); }
+.match-sub, .yt-banner {
+  border-color: var(--yt);
+  box-shadow: 0 0 0 1px var(--yt-glow), 0 0 22px var(--yt-glow);
+}
+.match-sub:hover { border-color: var(--yt); }
+@media (prefers-reduced-motion: no-preference) {
+  .match-sub { animation: yt-glow 2.8s ease-in-out infinite; }
+  @keyframes yt-glow { 50% { box-shadow: 0 0 0 1px var(--yt-glow), 0 0 34px var(--yt-glow); } }
+}
+.yt-banner p { margin: .35rem 0 .75rem; }
+.btn-yt { background: var(--yt); border-color: var(--yt); color: #fff; }

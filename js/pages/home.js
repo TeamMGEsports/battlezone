@@ -5,7 +5,8 @@ initShell('home');
 
 const el = $('#matches');
 try {
-  const matches = await api.listMatches('upcoming');
+  // Subscriber-only matches are pinned to the top.
+  const matches = (await api.listMatches('upcoming')).sort((a, b) => (b.subscriber_only ? 1 : 0) - (a.subscriber_only ? 1 : 0));
   el.innerHTML = matches.length
     ? matches.map(matchRow).join('')
     : '<p class="empty">No matches scheduled yet. Check the WhatsApp group for updates.</p>';
