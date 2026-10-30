@@ -9,7 +9,7 @@ export const CONFIG = {
   upiId: '***@ybl', // placeholder: replace with your real UPI ID before the first paid match
   upiName: 'TeamMG Esports',
   // YouTube channel for subscriber-only matches (full link, e.g. https://www.youtube.com/@teammg).
-  youtubeChannel: '',
+  youtubeChannel: 'https://www.youtube.com/@TeamMGYT',
   supabaseUrl: 'https://jbhjgzagntyniuvwgbhg.supabase.co',
   supabaseAnonKey: 'sb_publishable_CfcEqORa54NJwkttWImcsg_yONFBsjm',
 };
