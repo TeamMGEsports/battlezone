@@ -1,7 +1,7 @@
-import { api, isDemo, resetDemo } from '../api.js';
+import { api, isDemo, resetDemo, amountOf, PLAYERS_PER_MODE } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, subBadge } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, ytHandle, subBadge, paidTag } from '../ui.js';
 
 initShell('admin');
 
@@ -68,6 +68,7 @@ function adminCard(m) {
         <div class="am-info">
           <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</div>
           <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}${m.checkin_required ? ' · Check-in' : ''}</div>
+          ${m.notice ? `<div class="meta notice-line">${esc(m.notice)}</div>` : ''}
         </div>
         <div class="am-slots">
           <strong>${m.filled}/${m.max_slots}</strong>
@@ -78,7 +79,7 @@ function adminCard(m) {
       <div class="am-actions">
         ${act('teams', 'Teams')}${act('check', 'Room check')}${act('posts', 'WhatsApp')}${act('results', 'Results')}
         <span class="am-gap"></span>
-        ${act('edit', 'Edit', ' btn-quiet')}${act('copy', 'Copy +1 day', ' btn-quiet')}
+        ${act('notice', 'Notice', ' btn-quiet')}${act('edit', 'Edit', ' btn-quiet')}${act('copy', 'Copy +1 day', ' btn-quiet')}
       </div>
     </article>`;
 }
@@ -149,6 +150,7 @@ async function showList() {
     if (btn.dataset.act === 'check') return showRoomCheck(m);
     if (btn.dataset.act === 'posts') return showMatchPosts(m);
     if (btn.dataset.act === 'results') return showResults(m);
+    if (btn.dataset.act === 'notice') return showNotice(m);
   }));
 }
 
@@ -196,6 +198,7 @@ async function showEditor(m, template, dayShift = 0) {
       <label class="check"><input type="checkbox" name="checkin_required"${src.checkin_required ? ' checked' : ''}>
         Require check-in (60 to 20 minutes before start). Teams that don’t check in lose their slot to the waitlist.</label>
       <label>Rules<textarea name="rules">${esc(src.rules ?? DEFAULT_RULES)}</textarea></label>
+      <label>YouTube live link (optional)<input name="live_url" type="url" placeholder="Leave empty to use your channel’s live page" value="${esc(src.live_url || '')}"></label>
       <fieldset>
         <legend>Room (hidden from players until reveal time)</legend>
         <div class="row">
@@ -234,6 +237,7 @@ async function showEditor(m, template, dayShift = 0) {
       subscriber_only: f.subscriber_only.checked,
       status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
       reg_close_minutes: Number(f.reg_close_minutes.value || 0),
+      live_url: f.live_url.value.trim() || null,
     }, {
       room_id: f.room_id.value.trim() || null, room_pass: f.room_pass.value.trim() || null,
       reveal_minutes: Number(f.reveal_minutes.value || 15),
@@ -267,7 +271,10 @@ async function showTeams(m) {
     <h1>${esc(m.title)}: ${ok.length}/${m.max_slots} confirmed</h1>
     ${m.subscriber_only ? `<p class="lead">Subscribers only. ${toVerify ? `<strong>${toVerify} team(s) to verify.</strong> ` : ''}Open each handle → <em>Subscriptions</em> tab, or check YouTube Studio → Subscribers, then tap <strong>Verify ✓</strong> or <strong>Reject</strong>.</p>` : ''}
     ${m.entry_fee > 0 ? `<p class="lead">₹${m.entry_fee} entry. ${toCheck ? `<strong>${toCheck} payment(s) to check.</strong> ` : ''}Match each UTR against your UPI app before confirming.</p>` : ''}
-    <div class="actions" style="margin-bottom:1rem"><button class="btn" id="copy">Copy slot list for WhatsApp</button></div>
+    <div class="actions" style="margin-bottom:1rem">
+      <button class="btn" id="copy">Copy slot list for WhatsApp</button>
+      <button class="btn" id="add-team">Add team (late entry)</button>
+    </div>
     <div id="msg"></div>
     <div class="table-wrap"><table>
       <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th><th>WhatsApp</th><th>Status</th><th></th></tr></thead>
@@ -296,6 +303,7 @@ async function showTeams(m) {
     await navigator.clipboard.writeText(listText);
     $('#msg').innerHTML = '<p class="success">Copied.</p>';
   }));
+  $('#add-team').addEventListener('click', guard(() => showAddTeam(m)));
   el.querySelector('tbody').addEventListener('click', guard(async e => {
     const ban = e.target.closest('button[data-ban]');
     if (ban) {
@@ -540,7 +548,13 @@ async function showResults(m) {
         kills: Number(tr.querySelector('[name=kills]').value || 0),
         prize: tr.querySelector('[name=prize]').value.trim() || null,
       }))
-      .filter(r => r.placement);
+      .filter(r => r.placement)
+      .map(r => {
+        // Keep a recorded payment when the same team keeps the same prize.
+        const old = regs.find(x => x.id === r.registration_id)?.result;
+        return old?.paid_at && old.prize === r.prize
+          ? { ...r, paid_at: old.paid_at, paid_ref: old.paid_ref, paid_amount: old.paid_amount } : r;
+      });
     if (!data.length) throw new Error('Pick at least the 1st place team.');
     const places = data.map(r => r.placement);
     if (new Set(places).size !== places.length) throw new Error('Two teams have the same place.');
@@ -550,7 +564,109 @@ async function showResults(m) {
       mvp = { registration_id: Number(regId), ign: ign.join('|'), kills: Number(form.mvp_kills.value || 0) };
     }
     await api.saveResults(m.id, data, mvp);
-    $('#msg').innerHTML = '<p class="success">Saved. Results are now live on the Results page.</p>';
+    if ((form.mvp.value || '') !== curMvp && m.mvp_paid_at) await api.setPrizePaid(m.id, 'mvp', null);
+    const fresh = (await api.listMatches('all')).find(x => x.id === m.id);
+    await showResults(fresh);
+    $('#msg').innerHTML = '<p class="success">Saved. Results are now live on the Results page. Mark prizes as paid below once sent.</p>';
+  }));
+  payoutsSection(m, regs);
+}
+
+// Prize payments: mark each prize as paid (with the last 4 digits of the UPI
+// reference) so winners see "Paid" on the results page.
+function payoutsSection(m, regs) {
+  const winners = regs.filter(r => r.result?.prize && r.result.placement)
+    .sort((a, b) => a.result.placement - b.result.placement)
+    .map(r => ({ key: r.id, label: `${['🥇', '🥈', '🥉'][r.result.placement - 1] || `#${r.result.placement}`} ${r.team_name}`,
+      prize: r.result.prize, amount: amountOf(r.result.prize), at: r.result.paid_at, ref: r.result.paid_ref }));
+  if (m.mvp_ign && m.prize_mvp) {
+    winners.push({ key: 'mvp', label: `⭐ MVP ${m.mvp_ign}${m.mvp_team ? ` (${m.mvp_team})` : ''}`, prize: `₹${m.prize_mvp}`,
+      amount: m.prize_mvp, at: m.mvp_paid_at, ref: m.mvp_paid_ref });
+  }
+  if (!winners.length) return;
+  const box = document.createElement('div');
+  box.className = 'panel';
+  box.innerHTML = `
+    <h3>Prize payments</h3>
+    <p class="meta">After sending a prize by UPI, mark it paid. Winners see “✓ Paid” on the results page, and it counts toward the total on the home page.</p>
+    ${winners.map(w => `
+      <div class="payout" data-key="${w.key}">
+        <span>${esc(w.label)} · <strong>${esc(w.prize)}</strong>${paidTag(w.at, w.ref)}</span>
+        ${w.at ? '<button type="button" class="btn btn-small" data-undo>Undo</button>' : `
+          <span class="actions"><input name="ref" placeholder="UPI ref last 4" maxlength="4" inputmode="numeric" style="width:8.5rem">
+          <button type="button" class="btn btn-small btn-primary" data-pay>Mark paid</button></span>`}
+      </div>`).join('')}`;
+  el.append(box);
+  box.addEventListener('click', guard(async e => {
+    const row = e.target.closest('.payout');
+    if (!row || !e.target.closest('button')) return;
+    const w = winners.find(x => String(x.key) === row.dataset.key);
+    const ref = row.querySelector('[name=ref]')?.value.trim();
+    if (ref && !/^[0-9A-Za-z]{1,4}$/.test(ref)) throw new Error('UPI reference: up to the last 4 digits only.');
+    await api.setPrizePaid(m.id, w.key, e.target.closest('[data-undo]') ? null : { ref: ref || null, amount: w.amount });
+    await showResults((await api.listMatches('all')).find(x => x.id === m.id));
+  }));
+}
+
+// ---------- notice (delays and other match-night updates) ----------
+const NOTICE_PRESETS = ['⏱ Delayed by 10 min', '⏱ Delayed by 20 min', '⏱ Delayed by 30 min',
+  '🔁 Room details updated, check again', '❌ Match cancelled, entry fees refunded within 24 hours'];
+function showNotice(m) {
+  el.innerHTML = `
+    <p class="meta"><a href="#" id="back">← Matches</a></p>
+    <h1>Notice: ${esc(m.title)}</h1>
+    <p class="lead">Shows as a banner on the match page and the home page. Use it for delays and last-minute changes.</p>
+    <div class="actions" style="margin-bottom:1rem">${NOTICE_PRESETS.map(t => `<button class="btn btn-small" data-preset="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+    <form id="notice" class="panel">
+      <label>Notice (up to 120 characters)<input name="notice" maxlength="120" value="${esc(m.notice || '')}"></label>
+      <div class="actions"><button class="btn btn-primary">Save notice</button><button type="button" class="btn" id="clear">Clear notice</button></div>
+      <div id="msg"></div>
+    </form>`;
+  $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
+  el.querySelectorAll('[data-preset]').forEach(b => b.addEventListener('click', () => { $('#notice').notice.value = b.dataset.preset; }));
+  $('#notice').addEventListener('submit', guard(async e => {
+    e.preventDefault();
+    await api.setNotice(m.id, e.target.notice.value.trim());
+    await showList();
+  }));
+  $('#clear').addEventListener('click', guard(async () => { await api.setNotice(m.id, null); await showList(); }));
+}
+
+// ---------- late entry ----------
+function showAddTeam(m) {
+  const n = PLAYERS_PER_MODE[m.mode];
+  el.innerHTML = `
+    <p class="meta"><a href="#" id="back">← Teams</a></p>
+    <h1>Add team: ${esc(m.title)}</h1>
+    <p class="lead">For late entries. The team gets the next free slot even though registration is closed${m.checkin_required ? ', and counts as checked in' : ''}. They can see the room with “Find my registration” (captain’s number + BGMI ID).</p>
+    <form id="add" class="panel">
+      ${m.mode === 'solo' ? '' : '<label>Team name<input name="team_name" required minlength="2" maxlength="30"></label>'}
+      <label>Captain’s WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number"></label>
+      ${m.subscriber_only ? '<label>Captain’s YouTube handle (optional)<input name="yt_handle" placeholder="@name"></label>' : ''}
+      ${Array.from({ length: n }, (_, i) => `
+        <fieldset><legend>${n === 1 ? 'Player' : i === 0 ? 'Player 1 (captain)' : `Player ${i + 1}`}</legend>
+          <div class="row">
+            <label>In-game name<input name="ign" required maxlength="20"></label>
+            <label>BGMI character ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits"></label>
+          </div>
+        </fieldset>`).join('')}
+      <div class="actions"><button class="btn btn-primary">Add team</button></div>
+      <div id="msg"></div>
+    </form>`;
+  $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showTeams(m); }));
+  $('#add').addEventListener('submit', guard(async e => {
+    e.preventDefault();
+    const f = e.target;
+    const igns = [...f.querySelectorAll('[name=ign]')].map(i => i.value.trim());
+    const ids = [...f.querySelectorAll('[name=bgmi_id]')].map(i => i.value.trim());
+    const players = igns.map((ign, i) => ({ ign, bgmi_id: ids[i] }));
+    const slot = await api.adminAddTeam(m, {
+      team_name: m.mode === 'solo' ? igns[0] : f.team_name.value.trim(),
+      phone: f.phone.value.trim(), players,
+      yt_handle: f.yt_handle?.value.trim() ? ytHandle(f.yt_handle.value) : null,
+    });
+    await showTeams((await api.listMatches('all')).find(x => x.id === m.id));
+    $('#msg').innerHTML = `<p class="success">Added in slot #${slot}. Ask them to use “Find my registration” on the match page to see the room.</p>`;
   }));
 }
 

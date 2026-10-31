@@ -101,6 +101,17 @@ After a captain registers, their phone remembers the team (per mode: solo, duo, 
 
 **Admin → Download backup** saves everything (matches, rooms, teams, players, results, bans) as one Excel file. The free Supabase plan has no backups you can restore yourself, so download one every week. The file contains phone numbers: keep it private.
 
+## Trust and match night
+
+- **🔴 Watch live:** a red button on the match page (and a LIVE tag on the home page) from 15 minutes before start until 3 hours after. It opens your channel's live page (`youtubeChannel` + `/live`), or a specific stream if you paste one in the match's **YouTube live link**.
+- **Notice:** Admin → **Notice** on a match shows a banner such as "⏱ Delayed by 10 min" on the match and home pages. There are presets for delays, room updates and cancellations.
+- **Late entry:** Admin → Teams → **Add team (late entry)** adds a team to the next free slot after registration has closed (counted as checked in). The team sees the room via **Find my registration**.
+- **Prize payments:** after saving results, mark each prize **Paid** (optionally with the last 4 digits of the UPI reference). Winners see "✓ Paid" on the results page.
+- **Track record:** the home and About pages show matches hosted, players, and the total paid to winners.
+- **Report a problem:** a button on each match page opens WhatsApp to an organizer with the match and slot filled in. Set `adminWhatsApp` in `js/config.js` (country code, no +) to turn it on.
+- **About page** (`about.html`): prizes, refunds, disputes, contact, privacy and disclaimer.
+- Database update: `supabase/migrations/007_trust.sql`.
+
 ## Releasing an update
 
 Browsers keep copies of the site's files. Each page loads its files with a version number (`?v=...`), so after changing any CSS or JavaScript run:
