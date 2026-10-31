@@ -10,13 +10,14 @@ async function loadBoard(days) {
     const rows = await api.leaderboard(since);
     el.innerHTML = rows.length ? `
       <div class="table-wrap"><table>
-        <thead><tr><th>#</th><th>Team</th><th class="num hide-sm">Played</th><th class="num">Wins</th><th class="num">MVP</th><th class="num">Kills</th><th class="num">Pts</th></tr></thead>
+        <thead><tr><th>#</th><th>Team</th><th class="num" title="Wins">🥇</th><th class="num" title="2nd places">🥈</th><th class="num" title="3rd places">🥉</th><th class="num">MVP</th></tr></thead>
         <tbody>${rows.map((r, i) => `
           <tr${i === 0 ? ' class="first"' : ''}><td>${i + 1}</td><td>${esc(r.team_name)}</td>
-          <td class="num hide-sm">${r.matches}</td><td class="num">${r.wins}</td><td class="num">${r.mvps ?? 0}</td><td class="num">${r.kills}</td>
-          <td class="num"><strong>${r.points}</strong></td></tr>`).join('')}
+          <td class="num"><strong>${r.wins}</strong></td><td class="num">${r.seconds ?? 0}</td><td class="num">${r.thirds ?? 0}</td>
+          <td class="num">${r.mvps ?? 0}</td></tr>`).join('')}
         </tbody>
-      </table></div>` : '<p class="empty">No results in this period yet.</p>';
+      </table></div>
+      <p class="meta">Ranked by wins, then 2nd places, then 3rd places, then MVPs.</p>` : '<p class="empty">No results in this period yet.</p>';
   } catch (err) {
     showError(el, err);
   }

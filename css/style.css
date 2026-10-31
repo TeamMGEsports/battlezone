@@ -190,3 +190,5 @@ details.am-past[open] summary .am-section::before { content: '▾ '; }
   .am-gap { display: none; }
   .am-actions .btn { flex: 1 1 calc(33% - .4rem); white-space: nowrap; padding: .5rem .25rem; font-size: .82rem; }
 }
+.btn-last { width: 100%; justify-content: flex-start; font-weight: 500; border-style: dashed; }
+label.ql { grid-template-columns: 7.5rem 1fr; align-items: center; margin-bottom: .5rem; }

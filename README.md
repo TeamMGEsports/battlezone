@@ -87,10 +87,29 @@ A YouTube handle can only be used once per match. Waitlisted teams that get a sl
 
 Each database update in `supabase/migrations/` has a matching `_rollback.sql`. To undo one: click **Revert** on the merged pull request on GitHub, merge the revert, then run the rollback file in the Supabase SQL Editor. No match, team or result data is lost.
 
-## Points
+## Results and leaderboard
 
-Placement points + 1 per kill. 1st 10, 2nd 6, 3rd 5, 4th 4, 5th 3, 6th 2, 7th–8th 1.
-To change them, edit `placement_points()` in `supabase/schema.sql` (and re-run it in Supabase) and `placementPoints()` in `js/api.js`.
+- **Admin → Results:** pick the 🥇 1st, 🥈 2nd and 🥉 3rd teams and the ⭐ MVP with their kills. Prizes fill in from the match's prize amounts. **Full standings** (other places, team kills, custom prizes) is optional.
+- Kills don't earn points. The leaderboard ranks teams by **wins, then 2nd places, then 3rd places, then MVPs**. An MVP counts even when their team finished outside the top 3.
+- Database update: `supabase/migrations/006_quick_results.sql`.
+
+## Registering faster
+
+After a captain registers, their phone remembers the team (per mode: solo, duo, squad). Next time a **Use my last team** button fills in everything. It is stored only in that phone's browser, not in the database.
+
+## Backups
+
+**Admin → Download backup** saves everything (matches, rooms, teams, players, results, bans) as one Excel file. The free Supabase plan has no backups you can restore yourself, so download one every week. The file contains phone numbers: keep it private.
+
+## Releasing an update
+
+Browsers keep copies of the site's files. Each page loads its files with a version number (`?v=...`), so after changing any CSS or JavaScript run:
+
+```
+python3 scripts/release.py
+```
+
+and commit. Every phone then loads the new files straight away.
 
 ## Privacy & safety
 

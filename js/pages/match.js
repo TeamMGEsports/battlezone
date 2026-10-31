@@ -22,6 +22,26 @@ function save(v) {
   try { v ? localStorage.setItem(savedKey, JSON.stringify(v)) : localStorage.removeItem(savedKey); } catch { /* not critical */ }
 }
 
+// The last team registered on this phone, per mode, so it can be filled in with one tap.
+// Stored only in this browser.
+const lastKey = mode => `tmg-last-team-${mode}`;
+function lastTeam(mode) {
+  try { return JSON.parse(localStorage.getItem(lastKey(mode))); } catch { return null; }
+}
+function rememberTeam(mode, team) {
+  try { localStorage.setItem(lastKey(mode), JSON.stringify({ ...lastTeam(mode), ...team })); } catch { /* not critical */ }
+}
+function fillTeam(form, team) {
+  if (form.team_name && team.team_name) form.team_name.value = team.team_name;
+  if (form.phone && team.phone) form.phone.value = team.phone;
+  if (form.yt_handle && team.yt_handle) form.yt_handle.value = team.yt_handle;
+  const igns = form.querySelectorAll('[name="ign"]'), ids = form.querySelectorAll('[name="bgmi_id"]');
+  (team.players || []).forEach((p, i) => {
+    if (igns[i]) igns[i].value = p.ign;
+    if (ids[i]) ids[i].value = p.bgmi_id;
+  });
+}
+
 // Registration form. With `current` it edits that team instead (no phone field).
 function registerForm(m, notice = '', current = null) {
   const n = PLAYERS_PER_MODE[m.mode];
@@ -40,6 +60,7 @@ function registerForm(m, notice = '', current = null) {
     <form id="register" class="panel"${current ? ' data-edit="1"' : ''}>
       <h3>${current ? `Edit slot #${current.slot_no}` : 'Register'}</h3>
       ${notice}
+      ${!current && lastTeam(m.mode) ? `<button type="button" class="btn btn-last" id="use-last">↺ Use my last team: <strong>${esc(lastTeam(m.mode).team_name)}</strong></button>` : ''}
       ${!current && m.entry_fee > 0 ? `<p class="meta">Entry fee ₹${m.entry_fee}, paid by UPI. After you register, your slot is held for 15 minutes while you pay.</p>` : ''}
       ${!current && m.filled >= m.max_slots ? `<p class="meta">All ${m.max_slots} slots are taken. Join the waitlist: if a team cancels or doesn’t check in, the next team on the waitlist gets their slot automatically.</p>` : ''}
       ${m.subscriber_only && !current ? `
@@ -252,6 +273,10 @@ async function render() {
     ${m.waitlist && !done ? `<p class="meta">${m.waitlist} team(s) on the waitlist.</p>` : ''}`;
 
   $('#register')?.addEventListener('submit', e => submit(e, m));
+  $('#use-last')?.addEventListener('click', e => {
+    fillTeam($('#register'), lastTeam(m.mode));
+    e.currentTarget.remove();
+  });
   $('#find')?.addEventListener('submit', e => find(e, m));
   $('#edit-team')?.addEventListener('click', () => {
     $('#mine').innerHTML = registerForm(m, '', mine);
@@ -367,6 +392,10 @@ async function submit(e, m) {
       yt_handle: m.subscriber_only ? ytHandle(form.yt_handle.value) : undefined,
     });
     save({ slot: res.slot, token: res.token });
+    rememberTeam(m.mode, {
+      team_name: m.mode === 'solo' ? players[0].ign : form.team_name.value.trim(),
+      phone: form.phone.value.trim(), players, ...(m.subscriber_only ? { yt_handle: ytHandle(form.yt_handle.value) } : {}),
+    });
     await render();
     window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (err) {
@@ -395,10 +424,9 @@ async function saveEdit(e, m, saved) {
   const players = readPlayers(form);
   btn.disabled = true;
   try {
-    await api.editRegistration(saved.token, {
-      team_name: m.mode === 'solo' ? players[0].ign : form.team_name.value,
-      players,
-    });
+    const team_name = m.mode === 'solo' ? players[0].ign : form.team_name.value.trim();
+    await api.editRegistration(saved.token, { team_name, players });
+    rememberTeam(m.mode, { team_name, players });
     await render();
   } catch (err) {
     showError($('#register-msg'), err);
