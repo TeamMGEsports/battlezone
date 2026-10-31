@@ -48,8 +48,8 @@ export function roomPost(m) {
 export function resultsPost(m, results) {
   const medals = ['🥇', '🥈', '🥉'];
   const prizes = [m.prize_1, m.prize_2, m.prize_3];
-  const top = results.slice(0, 3).map((r, i) =>
-    `${medals[i]} ${r.team_name}: ${r.points} pts (${r.kills} kills)${r.prize ? ` · ${r.prize}` : prizes[i] ? ` · ₹${prizes[i]}` : ''}`);
+  const top = [...results].sort((a, b) => a.placement - b.placement).filter(r => r.placement <= 3).map(r =>
+    `${medals[r.placement - 1]} ${r.team_name}${r.kills ? ` (${r.kills} kills)` : ''}${r.prize ? ` · ${r.prize}` : prizes[r.placement - 1] ? ` · ₹${prizes[r.placement - 1]}` : ''}`);
   return [
     `🏆 *Results: ${m.title}* (${fmtDate(m.starts_at)})`,
     ...top,
@@ -69,7 +69,7 @@ export function tonightPost(matches) {
 export function leaderboardPost(rows) {
   return [
     '📊 *Weekly leaderboard* (last 7 days)',
-    ...rows.slice(0, 10).map((r, i) => `${i + 1}. ${r.team_name}: ${r.points} pts · ${r.wins} wins · ${r.kills} kills${r.mvps ? ` · ${r.mvps} MVP` : ''}`),
+    ...rows.slice(0, 10).map((r, i) => `${i + 1}. ${r.team_name}: 🥇${r.wins} 🥈${r.seconds ?? 0} 🥉${r.thirds ?? 0}${r.mvps ? ` ⭐${r.mvps} MVP` : ''}`),
     '',
     `Full leaderboard: ${base()}results.html`,
     `${CONFIG.siteName}`,

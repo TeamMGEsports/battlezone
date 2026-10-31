@@ -120,7 +120,7 @@ const remote = {
   },
   async getResults(matchId) {
     return unwrap(await (await sb()).from('results_public')
-      .select('*').eq('match_id', matchId).order('points', { ascending: false }));
+      .select('*').eq('match_id', matchId).order('placement'));
   },
   async leaderboard(since, mode) {
     return unwrap(await (await sb()).rpc('leaderboard', { p_since: since, p_mode: mode || null }));
@@ -165,6 +165,26 @@ const remote = {
   },
   async listBans() {
     return unwrap(await (await sb()).from('bans').select('*').order('created_at', { ascending: false }));
+  },
+  // Every table, in pages of 1000 rows (the API's maximum per request).
+  async backup() {
+    const c = await sb();
+    const all = async (table, order) => {
+      const out = [];
+      for (let from = 0; ; from += 1000) {
+        const rows = unwrap(await c.from(table).select('*').order(order).range(from, from + 999));
+        out.push(...rows);
+        if (rows.length < 1000) return out;
+      }
+    };
+    return {
+      Matches: await all('matches', 'id'),
+      Rooms: await all('match_rooms', 'match_id'),
+      Registrations: await all('registrations', 'id'),
+      Players: await all('registration_players', 'id'),
+      Results: await all('results', 'registration_id'),
+      Bans: await all('bans', 'id'),
+    };
   },
   async addBans(entries) {
     unwrap(await (await sb()).from('bans').upsert(entries, { onConflict: 'kind,value', ignoreDuplicates: true }));
@@ -477,7 +497,7 @@ const demo = {
     return clone(db.results.filter(x => x.match_id === matchId).map(x => {
       const r = db.registrations.find(y => y.id === x.registration_id);
       return { ...withPoints(x), slot_no: r.slot_no, team_name: r.team_name };
-    }).sort((a, b) => b.points - a.points));
+    }).sort((a, b) => a.placement - b.placement));
   },
   async leaderboard(since, mode) {
     const rows = new Map();
@@ -486,15 +506,27 @@ const demo = {
       if (m.starts_at < since || (mode && m.mode !== mode)) continue;
       const r = db.registrations.find(y => y.id === x.registration_id);
       const key = r.team_name.toLowerCase();
-      const row = rows.get(key) || { team_name: r.team_name, matches: 0, wins: 0, kills: 0, points: 0, mvps: 0 };
+      const row = rows.get(key) || { team_name: r.team_name, matches: 0, wins: 0, seconds: 0, thirds: 0, kills: 0, points: 0, mvps: 0 };
       row.matches++;
-      row.mvps += m.mvp_registration_id === r.id ? 1 : 0;
       row.wins += x.placement === 1 ? 1 : 0;
+      row.seconds += x.placement === 2 ? 1 : 0;
+      row.thirds += x.placement === 3 ? 1 : 0;
       row.kills += x.kills;
       row.points += withPoints(x).points;
       rows.set(key, row);
     }
-    return [...rows.values()].sort((a, b) => b.points - a.points || b.kills - a.kills).slice(0, 50);
+    // Same as leaderboard() in 006: MVPs count even outside the top 3.
+    for (const m of db.matches) {
+      const r = db.registrations.find(y => y.id === m.mvp_registration_id);
+      if (!r || m.starts_at < since || (mode && m.mode !== mode)) continue;
+      const key = r.team_name.toLowerCase();
+      const row = rows.get(key) || { team_name: r.team_name, matches: 0, wins: 0, seconds: 0, thirds: 0, kills: 0, points: 0, mvps: 0 };
+      row.mvps++;
+      rows.set(key, row);
+    }
+    return [...rows.values()]
+      .sort((a, b) => b.wins - a.wins || b.seconds - a.seconds || b.thirds - a.thirds || b.mvps - a.mvps || b.kills - a.kills)
+      .slice(0, 50);
   },
 
   async signIn() { demoAdmin = true; },
@@ -530,6 +562,16 @@ const demo = {
     persist();
   },
   async listBans() { return clone(db.bans); },
+  async backup() {
+    return clone({
+      Matches: db.matches,
+      Rooms: Object.entries(db.rooms).map(([match_id, r]) => ({ match_id: Number(match_id), ...r })),
+      Registrations: db.registrations.map(({ players, ...r }) => r),
+      Players: db.registrations.flatMap(r => r.players.map(p => ({ registration_id: r.id, match_id: r.match_id, ...p }))),
+      Results: db.results.map(withPoints),
+      Bans: db.bans,
+    });
+  },
   async addBans(entries) {
     for (const e of entries) {
       if (!db.bans.some(b => b.kind === e.kind && b.value === e.value)) {

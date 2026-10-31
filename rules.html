@@ -7,7 +7,8 @@
   <meta name="description" content="Free BGMI squad and solo matches every night with prizes. Register online in seconds.">
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%23d97706'/><text x='16' y='22' font-family='system-ui' font-size='15' font-weight='700' text-anchor='middle' fill='white'>MG</text></svg>">
   <link rel="preconnect" href="https://jbhjgzagntyniuvwgbhg.supabase.co" crossorigin>
-  <link rel="stylesheet" href="css/style.css">
+  <script type="importmap">{"imports": {"./js/config.js": "./js/config.js?v=202610311433", "./js/api.js": "./js/api.js?v=202610311433", "./js/ui.js": "./js/ui.js?v=202610311433", "./js/posts.js": "./js/posts.js?v=202610311433"}}</script>
+  <link rel="stylesheet" href="css/style.css?v=202610311433">
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" defer></script>
 </head>
 <body>
@@ -37,13 +38,18 @@
         <li>Organizer decisions on disputes are final.</li>
       </ol>
     </div>
-    <h2>Points</h2>
-    <p class="lead">Placement points plus 1 point per kill. Ties are decided by kills, then by placement.</p>
-    <div id="points"></div>
+    <h2>Prizes &amp; leaderboard</h2>
+    <div class="panel">
+      <ul>
+        <li>Prizes go to the <strong>1st, 2nd and 3rd</strong> place teams and the <strong>MVP</strong> (the player with the most kills). Each match page shows the amounts.</li>
+        <li>The leaderboard ranks teams by <strong>wins</strong>, then <strong>2nd places</strong>, then <strong>3rd places</strong>, then <strong>MVPs</strong>.</li>
+        <li>Results are taken from the end-of-match screen. Organizer decisions are final.</li>
+      </ul>
+    </div>
   </main>
   <footer class="foot">
     <div class="wrap">Free BGMI matches every night. <a href="#" data-wa-group target="_blank" rel="noopener">Join the WhatsApp group</a></div>
   </footer>
-  <script type="module" src="js/pages/rules.js"></script>
+  <script type="module" src="js/pages/rules.js?v=202610311433"></script>
 </body>
 </html>

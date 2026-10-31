@@ -80,16 +80,21 @@ export function matchRow(m) {
     </a>`;
 }
 
-export function resultsTable(rows, { showPrize = true } = {}) {
+const MEDAL = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
+// Results in finishing order. Kills only show when they were entered.
+export function resultsTable(rows) {
   if (!rows.length) return '<p class="empty">Results not posted yet.</p>';
+  rows = [...rows].sort((a, b) => a.placement - b.placement);
+  const kills = rows.some(r => r.kills > 0);
   return `
     <div class="table-wrap"><table>
-      <thead><tr><th>#</th><th>Team</th><th class="num">Kills</th><th class="num">Pts</th>${showPrize ? '<th class="num">Prize</th>' : ''}</tr></thead>
-      <tbody>${rows.map((r, i) => `
-        <tr${i === 0 ? ' class="first"' : ''}>
-          <td>${i + 1}</td><td>${esc(r.team_name)}</td>
-          <td class="num">${r.kills}</td><td class="num"><strong>${r.points}</strong></td>
-          ${showPrize ? `<td class="num">${esc(r.prize || '–')}</td>` : ''}
+      <thead><tr><th>Place</th><th>Team</th>${kills ? '<th class="num">Kills</th>' : ''}<th class="num">Prize</th></tr></thead>
+      <tbody>${rows.map(r => `
+        <tr${r.placement === 1 ? ' class="first"' : ''}>
+          <td>${MEDAL[r.placement] || r.placement}</td><td>${esc(r.team_name)}</td>
+          ${kills ? `<td class="num">${r.kills}</td>` : ''}
+          <td class="num">${esc(r.prize || '–')}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;

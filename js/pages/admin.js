@@ -1,4 +1,4 @@
-import { api, isDemo, placementPoints, resetDemo } from '../api.js';
+import { api, isDemo, resetDemo } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
 import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, subBadge } from '../ui.js';
@@ -99,6 +99,7 @@ async function showList() {
       <button class="btn btn-small" id="post-tonight">Post: tonight</button>
       <button class="btn btn-small" id="post-board">Post: weekly top 10</button>
       <button class="btn btn-small" id="bans">Bans</button>
+      <button class="btn btn-small" id="backup">Download backup</button>
       ${isDemo ? '<button class="btn btn-small" id="reset">Reset demo data</button>' : ''}
     </div>
     <div id="msg"></div>
@@ -114,6 +115,18 @@ async function showList() {
   $('#new').addEventListener('click', guard(() => showEditor(null, upcoming.at(-1) || matches[0])));
   $('#reset')?.addEventListener('click', guard(async () => { resetDemo(); await showList(); }));
   $('#bans').addEventListener('click', guard(showBans));
+  $('#backup').addEventListener('click', guard(async e => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = 'Preparing…';
+    try {
+      await downloadBackup();
+      $('#msg').innerHTML = '<p class="success">Backup downloaded. It contains phone numbers, so keep the file private.</p>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Download backup';
+    }
+  }));
   $('#post-tonight').addEventListener('click', guard(async () => {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
     const tonight = (await api.listMatches('upcoming'))
@@ -327,6 +340,31 @@ async function showRoomCheck(m) {
   }));
 }
 
+// ---------- backup ----------
+const SHEETJS = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Could not load the Excel library. Check your connection.'));
+    document.head.append(s);
+  });
+}
+
+// One Excel file with a sheet per table.
+async function downloadBackup() {
+  const [sheets] = await Promise.all([api.backup(), window.XLSX ? null : loadScript(SHEETJS)]);
+  const wb = window.XLSX.utils.book_new();
+  for (const [name, rows] of Object.entries(sheets)) {
+    const flat = rows.map(r => Object.fromEntries(Object.entries(r).map(([k, v]) =>
+      [k, v !== null && typeof v === 'object' ? JSON.stringify(v) : v])));
+    window.XLSX.utils.book_append_sheet(wb, window.XLSX.utils.json_to_sheet(flat.length ? flat : [{}]), name);
+  }
+  const day = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+  window.XLSX.writeFile(wb, `teammg-backup-${day}.xlsx`);
+}
+
 // ---------- WhatsApp posts ----------
 function showPosts(title, posts) {
   el.innerHTML = `
@@ -408,48 +446,65 @@ async function showResults(m) {
   const players = regs.flatMap(r => r.players.map(p => ({ reg: r, ign: p.ign })));
   const mvpValue = (regId, ign) => `${regId}|${ign}`;
   const curMvp = m.mvp_ign ? mvpValue(m.mvp_registration_id ?? regs.find(r => r.team_name === m.mvp_team)?.id, m.mvp_ign) : '';
+  const placed = n => regs.find(r => r.result?.placement === n)?.id ?? '';
+  const teamOptions = sel => `<option value="">–</option>` + regs.map(r =>
+    `<option value="${r.id}"${r.id === sel ? ' selected' : ''}>#${r.slot_no} ${esc(r.team_name)}</option>`).join('');
+  const medals = { 1: '🥇 1st', 2: '🥈 2nd', 3: '🥉 3rd' };
+  const fullOpen = regs.some(r => r.result?.placement > 3 || r.result?.kills > 0);
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
     <h1>Results: ${esc(m.title)}</h1>
-    <p class="lead">Enter placement and kills from the end-of-match screen. Points are calculated automatically. Leave placement empty for teams that didn’t play.</p>
     <form id="results">
-      <div class="table-wrap"><table>
-        <thead><tr><th>Slot</th><th>Team</th><th>Place</th><th>Kills</th><th class="num">Pts</th><th>Prize</th></tr></thead>
-        <tbody>${regs.map(r => `
-          <tr data-id="${r.id}">
-            <td>${r.slot_no}</td><td>${esc(r.team_name)}</td>
-            <td><input name="placement" type="number" min="1" max="100" value="${r.result?.placement ?? ''}"></td>
-            <td><input name="kills" type="number" min="0" max="99" value="${r.result?.kills ?? ''}"></td>
-            <td class="num pts">–</td>
-            <td><input name="prize" style="width:6rem" value="${esc(r.result?.prize || '')}" placeholder="₹" data-auto="${r.result?.prize ? '' : '1'}"></td>
-          </tr>`).join('') || '<tr><td colspan="6" class="empty">No confirmed teams.</td></tr>'}
-        </tbody>
-      </table></div>
-      <fieldset style="margin-top:1rem">
-        <legend>MVP (player with the most kills)${m.prize_mvp ? `: ₹${m.prize_mvp}` : ''}</legend>
+      <div class="panel">
+        <h3>Winners</h3>
+        ${[1, 2, 3].map(n => `
+          <label class="ql"><span>${medals[n]}${placePrize[n] ? ` <span class="meta">₹${placePrize[n]}</span>` : ''}</span>
+            <select name="q${n}" data-place="${n}">${teamOptions(placed(n))}</select></label>`).join('')}
         <div class="row">
-          <label>Player<select name="mvp"><option value="">No MVP</option>
-            ${players.map(p => `<option value="${esc(mvpValue(p.reg.id, p.ign))}"${mvpValue(p.reg.id, p.ign) === curMvp ? ' selected' : ''}>${esc(p.ign)} (${esc(p.reg.team_name)})</option>`).join('')}
-          </select></label>
+          <label>⭐ MVP (most kills)${m.prize_mvp ? ` <span class="meta">₹${m.prize_mvp}</span>` : ''}
+            <select name="mvp"><option value="">No MVP</option>
+              ${players.map(p => `<option value="${esc(mvpValue(p.reg.id, p.ign))}"${mvpValue(p.reg.id, p.ign) === curMvp ? ' selected' : ''}>${esc(p.ign)} (${esc(p.reg.team_name)})</option>`).join('')}
+            </select></label>
           <label>MVP kills<input name="mvp_kills" type="number" min="0" max="99" value="${m.mvp_kills ?? ''}"></label>
         </div>
-        ${m.mode === 'solo' ? '<p class="meta">For solo matches the player with the most kills is picked automatically. You can change it.</p>' : '<p class="meta">Pick the player with the most kills from the end-of-match screen.</p>'}
-      </fieldset>
+      </div>
+      <details class="panel"${fullOpen ? ' open' : ''}>
+        <summary><strong>Full standings</strong> <span class="meta">(optional: other places, kills, custom prizes)</span></summary>
+        <div class="table-wrap" style="margin-top:.75rem"><table>
+          <thead><tr><th>Slot</th><th>Team</th><th>Place</th><th>Kills</th><th>Prize</th></tr></thead>
+          <tbody>${regs.map(r => `
+            <tr data-id="${r.id}">
+              <td>${r.slot_no}</td><td>${esc(r.team_name)}</td>
+              <td><input name="placement" type="number" min="1" max="100" value="${r.result?.placement ?? ''}"></td>
+              <td><input name="kills" type="number" min="0" max="99" value="${r.result?.kills || ''}"></td>
+              <td><input name="prize" style="width:6rem" value="${esc(r.result?.prize || '')}" placeholder="₹" data-auto="${r.result?.prize ? '' : '1'}"></td>
+            </tr>`).join('') || '<tr><td colspan="5" class="empty">No confirmed teams.</td></tr>'}
+          </tbody>
+        </table></div>
+      </details>
       <div class="actions"><button class="btn btn-primary">Save results &amp; mark completed</button></div>
       <div id="msg"></div>
     </form>`;
   const form = $('#results');
   const rows = () => [...form.querySelectorAll('tbody tr[data-id]')];
+  const row = id => rows().find(tr => tr.dataset.id === String(id));
+  const place = tr => tr.querySelector('[name=placement]');
+  const quick = n => form[`q${n}`];
+  // Winners picks write places 1-3 into the full table; the table writes back.
+  const applyQuick = () => {
+    rows().forEach(tr => { if ([1, 2, 3].includes(Number(place(tr).value))) place(tr).value = ''; });
+    [1, 2, 3].forEach(n => { if (quick(n).value) place(row(quick(n).value)).value = n; });
+  };
+  const syncQuick = () => [1, 2, 3].forEach(n => {
+    quick(n).value = rows().find(tr => Number(place(tr).value) === n)?.dataset.id ?? '';
+  });
   let mvpTouched = Boolean(curMvp);
   const update = () => {
     rows().forEach(tr => {
-      const p = Number(tr.querySelector('[name=placement]').value);
-      const k = Number(tr.querySelector('[name=kills]').value || 0);
-      tr.querySelector('.pts').textContent = p ? placementPoints(p) + k : '–';
       const prize = tr.querySelector('[name=prize]');
-      if (prize.dataset.auto) prize.value = placePrize[p] ? `₹${placePrize[p]}` : '';
+      if (prize.dataset.auto) prize.value = placePrize[Number(place(tr).value)] ? `₹${placePrize[Number(place(tr).value)]}` : '';
     });
-    // Solo: the player with the most kills is the MVP, unless the admin picked one.
+    // Solo: if kills are entered, the player with the most kills is the MVP, unless the admin picked one.
     if (m.mode === 'solo' && !mvpTouched) {
       const best = rows().map(tr => ({ tr, k: Number(tr.querySelector('[name=kills]').value || 0) }))
         .sort((a, b) => b.k - a.k)[0];
@@ -460,9 +515,18 @@ async function showResults(m) {
       }
     }
   };
+  form.addEventListener('change', e => {
+    const n = Number(e.target.dataset.place);
+    if (!n) return;
+    // The same team can't hold two places.
+    [1, 2, 3].forEach(o => { if (o !== n && quick(o).value === e.target.value) quick(o).value = ''; });
+    applyQuick();
+    update();
+  });
   form.addEventListener('input', e => {
     if (e.target.name === 'prize') delete e.target.dataset.auto;
     if (e.target.name === 'mvp' || e.target.name === 'mvp_kills') mvpTouched = true;
+    if (e.target.name === 'placement') syncQuick();
     update();
   });
   update();
@@ -472,13 +536,14 @@ async function showResults(m) {
     const data = rows()
       .map(tr => ({
         registration_id: Number(tr.dataset.id),
-        placement: Number(tr.querySelector('[name=placement]').value),
+        placement: Number(place(tr).value),
         kills: Number(tr.querySelector('[name=kills]').value || 0),
         prize: tr.querySelector('[name=prize]').value.trim() || null,
       }))
       .filter(r => r.placement);
+    if (!data.length) throw new Error('Pick at least the 1st place team.');
     const places = data.map(r => r.placement);
-    if (new Set(places).size !== places.length) throw new Error('Two teams have the same placement.');
+    if (new Set(places).size !== places.length) throw new Error('Two teams have the same place.');
     let mvp = null;
     if (form.mvp.value) {
       const [regId, ...ign] = form.mvp.value.split('|');
