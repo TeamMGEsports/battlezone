@@ -1,7 +1,7 @@
 import { api, isDemo, placementPoints, resetDemo } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, ytLink, subBadge } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, subBadge } from '../ui.js';
 
 initShell('admin');
 
@@ -53,41 +53,65 @@ $('#signout').addEventListener('click', guard(async e => {
 }));
 
 // ---------- match list ----------
+// Admin match card: details on top, every action in one wrapping row below.
+function adminCard(m) {
+  const [label, tone] = statusLabel(m);
+  const pct = Math.min(100, Math.round(m.filled / m.max_slots * 100));
+  const act = (a, text, cls = '') => `<button class="btn btn-small${cls}" data-act="${a}" data-id="${m.id}">${text}</button>`;
+  return `
+    <article class="am${m.subscriber_only ? ' match-sub' : ''}">
+      <div class="am-head">
+        <div class="match-time">
+          <span class="match-day">${esc(dayLabel(m.starts_at))}</span>
+          <strong>${esc(fmtTime(m.starts_at))}</strong>
+        </div>
+        <div class="am-info">
+          <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</div>
+          <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}${m.checkin_required ? ' · Check-in' : ''}</div>
+        </div>
+        <div class="am-slots">
+          <strong>${m.filled}/${m.max_slots}</strong>
+          <span class="meta">${m.waitlist ? `+${m.waitlist} waiting` : 'slots'}</span>
+        </div>
+      </div>
+      <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
+      <div class="am-actions">
+        ${act('teams', 'Teams')}${act('check', 'Room check')}${act('posts', 'WhatsApp')}${act('results', 'Results')}
+        <span class="am-gap"></span>
+        ${act('edit', 'Edit', ' btn-quiet')}${act('copy', 'Copy +1 day', ' btn-quiet')}
+      </div>
+    </article>`;
+}
+
 async function showList() {
   $('#signout').hidden = false;
   const matches = await api.listMatches('all');
+  const recent = Date.now() - 3 * 3600e3;
+  const upcoming = matches.filter(m => ['open', 'closed', 'live'].includes(m.status) && Date.parse(m.starts_at) >= recent)
+    .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+  const past = matches.filter(m => !upcoming.includes(m));
   el.innerHTML = `
-    <div class="actions" style="justify-content:space-between;align-items:center;margin-bottom:1rem">
-      <h1 style="margin:0">Matches</h1>
-      <div class="actions">
-        ${isDemo ? '<button class="btn" id="reset">Reset demo data</button>' : ''}
-        <button class="btn" id="post-tonight">Post: tonight</button>
-        <button class="btn" id="post-board">Post: weekly top 10</button>
-        <button class="btn" id="bans">Bans</button>
-        <button class="btn btn-primary" id="new">New match</button>
-      </div>
+    <div class="am-top">
+      <h1>Matches</h1>
+      <button class="btn btn-primary" id="new">New match</button>
+    </div>
+    <div class="actions am-tools">
+      <button class="btn btn-small" id="post-tonight">Post: tonight</button>
+      <button class="btn btn-small" id="post-board">Post: weekly top 10</button>
+      <button class="btn btn-small" id="bans">Bans</button>
+      ${isDemo ? '<button class="btn btn-small" id="reset">Reset demo data</button>' : ''}
     </div>
     <div id="msg"></div>
-    <div class="table-wrap"><table>
-      <thead><tr><th>When</th><th>Match</th><th>Slots</th><th>Status</th><th></th></tr></thead>
-      <tbody>${matches.map(m => `
-        <tr>
-          <td>${esc(dayLabel(m.starts_at))}<br><span class="meta">${esc(fmtTime(m.starts_at))}</span></td>
-          <td>${esc(m.title)}${m.subscriber_only ? ` ${subBadge}` : ''}<br><span class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}</span></td>
-          <td>${m.filled}/${m.max_slots}${m.waitlist ? `<br><span class="meta">+${m.waitlist} waiting</span>` : ''}</td>
-          <td>${statusLabel(m)[0]}</td>
-          <td><div class="actions">
-            <button class="btn btn-small" data-act="edit" data-id="${m.id}">Edit</button>
-            <button class="btn btn-small" data-act="copy" data-id="${m.id}">Copy +1 day</button>
-            <button class="btn btn-small" data-act="teams" data-id="${m.id}">Teams</button>
-            <button class="btn btn-small" data-act="check" data-id="${m.id}">Room check</button>
-            <button class="btn btn-small" data-act="posts" data-id="${m.id}">WhatsApp</button>
-            <button class="btn btn-small" data-act="results" data-id="${m.id}">Results</button>
-          </div></td>
-        </tr>`).join('') || '<tr><td colspan="5" class="empty">No matches yet.</td></tr>'}
-      </tbody>
-    </table></div>`;
-  $('#new').addEventListener('click', guard(() => showEditor(null, matches[0])));
+    <div id="am-lists">
+    <h2 class="am-section">Upcoming <span class="meta">(${upcoming.length})</span></h2>
+    <div class="list" id="cards">${upcoming.map(adminCard).join('') || '<p class="empty">No upcoming matches. Tap “New match”.</p>'}</div>
+    ${past.length ? `
+    <details class="am-past">
+      <summary><h2 class="am-section">Past <span class="meta">(${past.length})</span></h2></summary>
+      <div class="list">${past.map(adminCard).join('')}</div>
+    </details>` : ''}
+    </div>`;
+  $('#new').addEventListener('click', guard(() => showEditor(null, upcoming.at(-1) || matches[0])));
   $('#reset')?.addEventListener('click', guard(async () => { resetDemo(); await showList(); }));
   $('#bans').addEventListener('click', guard(showBans));
   $('#post-tonight').addEventListener('click', guard(async () => {
@@ -102,8 +126,8 @@ async function showList() {
     if (!rows.length) throw new Error('No results in the last 7 days.');
     showPosts('Weekly leaderboard', [['Weekly top 10', leaderboardPost(rows)]]);
   }));
-  el.querySelector('tbody').addEventListener('click', guard(async e => {
-    const btn = e.target.closest('button');
+  $('#am-lists').addEventListener('click', guard(async e => {
+    const btn = e.target.closest('button[data-act]');
     if (!btn) return;
     const m = matches.find(x => x.id === Number(btn.dataset.id));
     if (btn.dataset.act === 'edit') return showEditor(m);
