@@ -85,15 +85,16 @@ td.num, th.num { text-align: right; }
 td input { width: 4.5rem; }
 
 /* forms */
-form { display: grid; gap: .75rem; }
+form { display: grid; grid-template-columns: minmax(0, 1fr); gap: .75rem; }
 label { display: grid; gap: .25rem; font-size: .875rem; font-weight: 500; }
 input, select, textarea {
+  min-width: 0; max-width: 100%;
   font: inherit; color: var(--text); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: .55rem .7rem; width: 100%;
 }
 input:focus, select:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 textarea { min-height: 6rem; resize: vertical; }
-.row { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; }
 fieldset { border: 1px solid var(--line); border-radius: 8px; padding: .75rem; margin: 0; display: grid; gap: .5rem; }
 legend { font-size: .8rem; color: var(--muted); padding: 0 .25rem; }
 
@@ -191,4 +192,15 @@ details.am-past[open] summary .am-section::before { content: '▾ '; }
   .am-actions .btn { flex: 1 1 calc(33% - .4rem); white-space: nowrap; padding: .5rem .25rem; font-size: .82rem; }
 }
 .btn-last { width: 100%; justify-content: flex-start; font-weight: 500; border-style: dashed; }
-label.ql { grid-template-columns: 7.5rem 1fr; align-items: center; margin-bottom: .5rem; }
+label.ql { grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; margin-bottom: .5rem; }
+
+/* Trust: notices, live, paid, stats */
+.notice { background: var(--accent); color: var(--accent-text); border-radius: var(--radius); padding: .6rem .9rem; font-weight: 600; margin: .5rem 0 1rem; }
+.notice-line { color: var(--accent); font-weight: 600; }
+.paid { color: var(--ok); font-weight: 600; white-space: nowrap; }
+.stats { color: var(--muted); font-size: .9rem; margin: -.25rem 0 1rem; }
+.stats:empty { display: none; }
+.btn-live { width: 100%; margin-bottom: 1rem; }
+.payout { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; padding: .6rem 0; border-top: 1px solid var(--line); }
+.payout input { padding: .35rem .5rem; }
+.foot nav { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .4rem; }

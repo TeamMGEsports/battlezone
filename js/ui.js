@@ -45,6 +45,25 @@ export function ytHandle(input) {
   return v ? (v.startsWith('@') ? v : `@${v}`) : '';
 }
 export const ytLink = handle => `https://www.youtube.com/${encodeURIComponent(handle).replace('%40', '@')}`;
+// "Watch live" shows from 15 minutes before start until 3 hours after.
+export function liveNow(m) {
+  const start = Date.parse(m.starts_at);
+  return Boolean(m.live_url || CONFIG.youtubeChannel) && !['cancelled', 'completed'].includes(m.status)
+    && Date.now() >= start - 15 * 60e3 && Date.now() <= start + 3 * 3600e3;
+}
+export const liveUrl = m => m.live_url || `${CONFIG.youtubeChannel.replace(/\/$/, '')}/live`;
+export const noticeHtml = m => m.notice ? `<div class="notice">${esc(m.notice)}</div>` : '';
+const fmtDay = iso => new Date(iso).toLocaleDateString('en-IN', { timeZone: TZ, day: 'numeric', month: 'short' });
+export const paidTag = (at, ref) => at
+  ? ` <span class="paid" title="Paid ${esc(fmtDay(at))}${ref ? `, UPI ref …${esc(ref)}` : ''}">✓ Paid</span>` : '';
+
+// "214 matches hosted · 650 players · ₹18,400 paid to 126 winners"
+export function statsLine(s) {
+  const n = (v, one, many) => `<strong>${v.toLocaleString('en-IN')}</strong> ${v === 1 ? one : many}`;
+  return `${n(s.matches_hosted, 'match hosted', 'matches hosted')} · ${n(s.players, 'player', 'players')}`
+    + (s.winners_paid ? ` · <strong>₹${s.amount_paid.toLocaleString('en-IN')}</strong> paid to ${s.winners_paid} ${s.winners_paid === 1 ? 'winner' : 'winners'}` : '');
+}
+
 export const subBadge = '<span class="tag tag-yt">Subscribers only</span>';
 
 export const waitlistOpen = m => !(m.entry_fee > 0) && (m.waitlist || 0) < WAITLIST_MAX;
@@ -72,7 +91,8 @@ export function matchRow(m) {
         <strong>${esc(fmtTime(m.starts_at))}</strong>
       </div>
       <div class="match-body">
-        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</div>
+        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}${liveNow(m) ? ' <span class="tag tag-yt">● Live</span>' : ''}</div>
+        ${m.notice ? `<div class="meta notice-line">${esc(m.notice)}</div>` : ''}
         <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}</div>
         <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
         <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}${m.waitlist ? ` · ${m.waitlist} on waitlist` : ''}</div>
@@ -94,7 +114,7 @@ export function resultsTable(rows) {
         <tr${r.placement === 1 ? ' class="first"' : ''}>
           <td>${MEDAL[r.placement] || r.placement}</td><td>${esc(r.team_name)}</td>
           ${kills ? `<td class="num">${r.kills}</td>` : ''}
-          <td class="num">${esc(r.prize || '–')}</td>
+          <td class="num">${esc(r.prize || '–')}${paidTag(r.paid_at, r.paid_ref)}</td>
         </tr>`).join('')}
       </tbody>
     </table></div>`;
@@ -102,7 +122,7 @@ export function resultsTable(rows) {
 
 export function mvpLine(m) {
   if (!m.mvp_ign) return '';
-  return `<p class="mvp"><span class="tag tag-ok">MVP</span> <strong>${esc(m.mvp_ign)}</strong>${m.mvp_team ? ` <span class="meta">(${esc(m.mvp_team)})</span>` : ''} · ${m.mvp_kills ?? 0} kills${m.prize_mvp ? ` · ₹${m.prize_mvp}` : ''}</p>`;
+  return `<p class="mvp"><span class="tag tag-ok">MVP</span> <strong>${esc(m.mvp_ign)}</strong>${m.mvp_team ? ` <span class="meta">(${esc(m.mvp_team)})</span>` : ''} · ${m.mvp_kills ?? 0} kills${m.prize_mvp ? ` · ₹${m.prize_mvp}` : ''}${paidTag(m.mvp_paid_at, m.mvp_paid_ref)}</p>`;
 }
 
 export function shareLink(text) {
@@ -115,6 +135,9 @@ export function initShell(active) {
     if (a.dataset.nav === active) a.setAttribute('aria-current', 'page');
   });
   document.querySelectorAll('[data-wa-group]').forEach(a => { a.href = CONFIG.whatsappGroup; });
+  document.querySelectorAll('[data-yt]').forEach(a => {
+    if (CONFIG.youtubeChannel) { a.href = CONFIG.youtubeChannel; a.hidden = false; }
+  });
   document.querySelectorAll('[data-site-name]').forEach(el => { el.textContent = CONFIG.siteName; });
   if (isDemo) {
     const note = document.createElement('div');

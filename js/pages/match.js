@@ -1,6 +1,6 @@
 import { api, PLAYERS_PER_MODE, registrationOpen, regCloseMinutes, CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge, liveNow, liveUrl, noticeHtml } from '../ui.js';
 
 initShell('home');
 
@@ -76,6 +76,15 @@ function registerForm(m, notice = '', current = null) {
       </div>
       <div id="register-msg" role="status"></div>
     </form>`;
+}
+
+function reportLink(m, mine) {
+  const text = [
+    `Problem report: ${m.title} (match #${m.id}, ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)})`,
+    mine?.slot_no ? `Slot #${mine.slot_no}${mine.team_name ? `, ${mine.team_name}` : ''}` : null,
+    'Issue: ',
+  ].filter(Boolean).join('\n');
+  return `https://wa.me/${CONFIG.adminWhatsApp}?text=${encodeURIComponent(text)}`;
 }
 
 function channelLink() {
@@ -249,6 +258,7 @@ async function render() {
   el.innerHTML = `
     <p class="meta"><a href="index.html">← All matches</a></p>
     <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</h1>
+    ${noticeHtml(m)}
     <p class="lead">${esc(dayLabel(m.starts_at))}, ${esc(fmtTime(m.starts_at))} IST${!started && !done ? ` · starts in <span id="cd">${countdown(m.starts_at)}</span>` : ''}
       ${m.status === 'open' && !started ? `<br><span class="meta">Registration ${regOpen ? 'closes' : 'closed'} at ${esc(fmtTime(closesAt))} IST.</span>` : ''}</p>
     <div class="facts">
@@ -266,7 +276,12 @@ async function render() {
     <div id="mine">${regPanel(m, mine)}</div>
     ${canRegister && !mine ? registerForm(m, expired ? '<p class="error">Your 15-minute payment window ended, so the slot was released. You can register again.</p>' : '') : ''}
     ${!mine && !done && m.status !== 'cancelled' ? findForm() : ''}
-    <div class="actions"><a class="btn" href="${shareLink(shareText)}" target="_blank" rel="noopener">Share on WhatsApp</a></div>
+    ${liveNow(m) ? `<a class="btn btn-yt btn-live" href="${esc(liveUrl(m))}" target="_blank" rel="noopener">🔴 Watch live on YouTube</a>` : ''}
+    ${m.entry_fee > 0 && !done ? `<p class="meta">Prizes are paid by UPI within 24 hours of results. If this match is cancelled, entry fees are refunded within 24 hours.</p>` : ''}
+    <div class="actions">
+      <a class="btn" href="${shareLink(shareText)}" target="_blank" rel="noopener">Share on WhatsApp</a>
+      ${CONFIG.adminWhatsApp ? `<a class="btn" href="${esc(reportLink(m, mine))}" target="_blank" rel="noopener">Report a problem</a>` : ''}
+    </div>
     ${m.rules ? `<h2>Rules</h2><p class="rules">${esc(m.rules)}</p>` : ''}
     <h2>Registered ${unit(m.mode, 2)} (${teams.length})</h2>
     ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}${m.checkin_required && t.checked_in ? ' <span class="success" title="Checked in">✓</span>' : ''}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}

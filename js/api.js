@@ -28,6 +28,18 @@ export const CHECKIN_OPENS_MIN = 60;
 export const CHECKIN_CLOSES_MIN = 20;
 export const WAITLIST_MAX = 10;
 
+// Same unique rules as the database, as readable messages.
+const DUPLICATES = {
+  registrations_match_id_phone_key: 'This WhatsApp number is already registered for this match',
+  registrations_team_name_uq: 'This team name is already taken for this match',
+  registration_players_match_id_bgmi_id_key: 'One of these BGMI IDs is already registered for this match',
+  registrations_yt_handle_uq: 'This YouTube handle is already registered for this match',
+};
+const friendly = msg => Object.entries(DUPLICATES).find(([k]) => msg.includes(k))?.[1] || msg;
+
+// "₹250" → 250. Used to total up prizes paid.
+export const amountOf = prize => Number(String(prize ?? '').replace(/[^0-9]/g, '')) || 0;
+
 // Minutes before start that registration closes. With check-in it closes
 // no later than check-in does (same rule as registration_open() in the database).
 export function regCloseMinutes(m) {
@@ -125,6 +137,10 @@ const remote = {
   async leaderboard(since, mode) {
     return unwrap(await (await sb()).rpc('leaderboard', { p_since: since, p_mode: mode || null }));
   },
+  async siteStats() {
+    const { data, error } = await (await sb()).rpc('site_stats');
+    return error ? null : data[0]; // before migration 007 the stats just don't show
+  },
 
   // --- admin ---
   async signIn(email, password) {
@@ -157,7 +173,7 @@ const remote = {
   async adminRegistrations(matchId) {
     await (await sb()).rpc('settle_match', { p_match_id: matchId });
     return unwrap(await (await sb()).from('registrations')
-      .select('*, players:registration_players(ign, bgmi_id), result:results(placement, kills, points, prize)')
+      .select('*, players:registration_players(ign, bgmi_id), result:results(placement, kills, points, prize, paid_at, paid_ref, paid_amount)')
       .eq('match_id', matchId).order('slot_no'));
   },
   async setRegistrationStatus(id, status) {
@@ -165,6 +181,39 @@ const remote = {
   },
   async listBans() {
     return unwrap(await (await sb()).from('bans').select('*').order('created_at', { ascending: false }));
+  },
+  // Late entry: an organizer adds a team directly, even after registration closed.
+  async adminAddTeam(m, { team_name, phone, players, yt_handle }) {
+    const c = await sb();
+    const { data: reg, error } = await c.from('registrations').insert({
+      match_id: m.id, team_name, phone, status: 'confirmed', yt_handle: yt_handle || null,
+      checked_in_at: m.checkin_required ? new Date().toISOString() : null,
+    }).select().single();
+    if (error) throw new Error(friendly(error.message));
+    const added = await c.from('registration_players')
+      .insert(players.map(p => ({ registration_id: reg.id, match_id: m.id, ign: p.ign, bgmi_id: p.bgmi_id })));
+    if (added.error) {
+      await c.from('registrations').delete().eq('id', reg.id);
+      throw new Error(friendly(added.error.message));
+    }
+    return reg.slot_no;
+  },
+  async setNotice(matchId, notice) {
+    unwrap(await (await sb()).from('matches').update({ notice: notice || null }).eq('id', matchId));
+  },
+  // target: a registration id, or 'mvp'. paid: { ref, amount } or null to undo.
+  async setPrizePaid(matchId, target, paid) {
+    const c = await sb();
+    const at = paid ? new Date().toISOString() : null;
+    if (target === 'mvp') {
+      unwrap(await c.from('matches').update({
+        mvp_paid_at: at, mvp_paid_ref: paid?.ref || null, mvp_paid_amount: paid?.amount ?? null,
+      }).eq('id', matchId));
+    } else {
+      unwrap(await c.from('results').update({
+        paid_at: at, paid_ref: paid?.ref || null, paid_amount: paid?.amount ?? null,
+      }).eq('registration_id', target));
+    }
   },
   // Every table, in pages of 1000 rows (the API's maximum per request).
   async backup() {
@@ -209,7 +258,7 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v5';
+const DEMO_KEY = 'tmg-demo-v6';
 const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
@@ -237,7 +286,7 @@ function seed() {
     entry_fee: 0, reg_close_minutes: 30, checkin_required: false,
     prize_1: 250, prize_2: 150, prize_3: 75, prize_mvp: 50, prize_pool: null, per_kill: null,
   }));
-  Object.assign(db.matches[0], { checkin_required: true });
+  Object.assign(db.matches[0], { checkin_required: true, notice: '⏱ Delayed by 10 min' });
   db.matches.push({ id: 6, title: 'Subscriber Squad Cup', mode: 'squad', map: 'Erangel', starts_at: istAt(1, '20:00'), max_slots: 20, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 0, reg_close_minutes: 30, checkin_required: false, prize_1: 500, prize_2: 300, prize_3: 150, prize_mvp: 100, subscriber_only: true });
   db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 20, reg_close_minutes: 30, checkin_required: false, prize_1: 400, prize_2: 200, prize_3: 100, prize_mvp: 100 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];
@@ -253,7 +302,11 @@ function seed() {
       if (matchId === 4) {
         const placement = i + 1;
         const kills = [14, 9, 11, 6, 4, 7, 2, 3][i];
-        db.results.push({ registration_id: id, match_id: 4, placement, kills, prize: ['₹250', '₹150', '₹100'][i] || null });
+        const prize = ['₹250', '₹150', '₹100'][i] || null;
+        db.results.push({
+          registration_id: id, match_id: 4, placement, kills, prize,
+          ...(i < 2 ? { paid_at: new Date().toISOString(), paid_ref: String(4821 + i), paid_amount: amountOf(prize) } : {}),
+        });
       }
     });
   }
@@ -499,6 +552,16 @@ const demo = {
       return { ...withPoints(x), slot_no: r.slot_no, team_name: r.team_name };
     }).sort((a, b) => a.placement - b.placement));
   },
+  async siteStats() {
+    const paid = db.results.filter(x => x.paid_at);
+    const mvps = db.matches.filter(m => m.mvp_paid_at);
+    return {
+      matches_hosted: db.matches.filter(m => m.status === 'completed').length,
+      players: new Set(db.registrations.flatMap(r => r.players.map(p => p.bgmi_id))).size,
+      winners_paid: paid.length + mvps.length,
+      amount_paid: paid.reduce((t, x) => t + (x.paid_amount || 0), 0) + mvps.reduce((t, m) => t + (m.mvp_paid_amount || 0), 0),
+    };
+  },
   async leaderboard(since, mode) {
     const rows = new Map();
     for (const x of db.results) {
@@ -562,6 +625,34 @@ const demo = {
     persist();
   },
   async listBans() { return clone(db.bans); },
+  async adminAddTeam(m, { team_name, phone, players, yt_handle }) {
+    const all = db.registrations.filter(r => r.match_id === m.id);
+    if (all.some(r => r.phone === phone)) throw new Error(DUPLICATES.registrations_match_id_phone_key);
+    checkDuplicates(all, team_name, players);
+    const reg = {
+      id: ++db.seq, match_id: m.id, slot_no: null, team_name, phone, status: null,
+      created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: null,
+      hold_until: null, checked_in_at: m.checkin_required ? new Date().toISOString() : null, yt_handle: yt_handle || null,
+      players: players.map(p => ({ ign: p.ign, bgmi_id: p.bgmi_id })),
+    };
+    setStatus(reg, 'confirmed');
+    db.registrations.push(reg);
+    persist();
+    return reg.slot_no;
+  },
+  async setNotice(matchId, notice) {
+    db.matches.find(m => m.id === matchId).notice = notice || null;
+    persist();
+  },
+  async setPrizePaid(matchId, target, paid) {
+    const at = paid ? new Date().toISOString() : null;
+    if (target === 'mvp') {
+      Object.assign(db.matches.find(m => m.id === matchId), { mvp_paid_at: at, mvp_paid_ref: paid?.ref || null, mvp_paid_amount: paid?.amount ?? null });
+    } else {
+      Object.assign(db.results.find(x => x.registration_id === target), { paid_at: at, paid_ref: paid?.ref || null, paid_amount: paid?.amount ?? null });
+    }
+    persist();
+  },
   async backup() {
     return clone({
       Matches: db.matches,

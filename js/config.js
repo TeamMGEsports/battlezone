@@ -9,6 +9,9 @@ export const CONFIG = {
   upiId: 'deepakgandla@ybl',
   upiName: 'TeamMG Esports',
   // YouTube channel for subscriber-only matches (full link, e.g. https://www.youtube.com/@teammg).
+  // Organizer WhatsApp number for "Report a problem" and the About page,
+  // with country code and no + (e.g. 919876543210). Leave empty to hide them.
+  adminWhatsApp: '',
   youtubeChannel: 'https://www.youtube.com/@TeamMGYT',
   supabaseUrl: 'https://jbhjgzagntyniuvwgbhg.supabase.co',
   supabaseAnonKey: 'sb_publishable_CfcEqORa54NJwkttWImcsg_yONFBsjm',
