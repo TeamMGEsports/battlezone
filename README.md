@@ -112,6 +112,11 @@ After a captain registers, their phone remembers the team (per mode: solo, duo, 
 - **About page** (`about.html`): prizes, refunds, disputes, contact, privacy and disclaimer.
 - Database update: `supabase/migrations/007_trust.sql`.
 
+## Substitutes and champions
+
+- **Substitute:** squads can add an optional 5th player. Subs follow the same rules as everyone else (valid BGMI ID, not banned, not in another team for that match) and are marked **Sub** in Teams and Room check. Database update: `supabase/migrations/008_substitutes.sql`.
+- **Champion badges:** on the match page, the #1 team of the week gets **👑 Champion of the week** and teams with 2+ wins in the last 30 days get **🏆 N wins**. A **⚔️ Teams to beat in this match** box sits above the registration form, and the home page shows **🔥 Teams to beat this week** (top 3).
+
 ## Releasing an update
 
 Browsers keep copies of the site's files. Each page loads its files with a version number (`?v=...`), so after changing any CSS or JavaScript run:

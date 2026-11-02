@@ -1,9 +1,19 @@
 import { api } from '../api.js';
-import { $, initShell, matchRow, showError, statsLine } from '../ui.js';
+import { $, esc, initShell, matchRow, showError, statsLine, teamForm } from '../ui.js';
 
 initShell('home');
 
 const el = $('#matches');
+// Teams to beat this week: the top 3 from the weekly leaderboard.
+teamForm().then(({ week }) => {
+  const top = week.filter(r => r.wins > 0).slice(0, 3);
+  if (!top.length) return;
+  $('#to-beat').innerHTML = `<div class="panel to-beat">
+    <strong>🔥 Teams to beat this week</strong>
+    <ol>${top.map((r, i) => `<li>${i === 0 ? '👑 ' : ''}<strong>${esc(r.team_name)}</strong> <span class="meta">${r.wins} ${r.wins === 1 ? 'win' : 'wins'}${r.mvps ? ` · ${r.mvps} MVP` : ''}</span></li>`).join('')}</ol>
+    <a class="meta" href="results.html">Full leaderboard →</a>
+  </div>`;
+});
 // Track record: only shown once there is something to show.
 api.siteStats().then(s => {
   if (!s || !s.matches_hosted) return;

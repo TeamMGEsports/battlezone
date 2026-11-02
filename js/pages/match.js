@@ -1,6 +1,6 @@
 import { api, PLAYERS_PER_MODE, registrationOpen, regCloseMinutes, CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge, liveNow, liveUrl, noticeHtml } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge, liveNow, liveUrl, noticeHtml, playerFieldsets, readPlayers, teamForm, formBadges, teamsToBeat } from '../ui.js';
 
 initShell('home');
 
@@ -44,18 +44,7 @@ function fillTeam(form, team) {
 
 // Registration form. With `current` it edits that team instead (no phone field).
 function registerForm(m, notice = '', current = null) {
-  const n = PLAYERS_PER_MODE[m.mode];
-  const players = Array.from({ length: n }, (_, i) => {
-    const p = current?.players[i] || {};
-    return `
-    <fieldset>
-      <legend>${n === 1 ? 'Player' : i === 0 ? 'Player 1 (captain)' : `Player ${i + 1}`}</legend>
-      <div class="row">
-        <label>In-game name<input name="ign" required maxlength="20" autocomplete="off" value="${esc(p.ign || '')}"></label>
-        <label>BGMI character ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits" autocomplete="off" value="${esc(p.bgmi_id || '')}"></label>
-      </div>
-    </fieldset>`;
-  }).join('');
+  const players = playerFieldsets(m.mode, current?.players);
   return `
     <form id="register" class="panel"${current ? ' data-edit="1"' : ''}>
       <h3>${current ? `Edit slot #${current.slot_no}` : 'Register'}</h3>
@@ -85,6 +74,15 @@ function reportLink(m, mine) {
     'Issue: ',
   ].filter(Boolean).join('\n');
   return `https://wa.me/${CONFIG.adminWhatsApp}?text=${encodeURIComponent(text)}`;
+}
+
+function toBeatHtml(list) {
+  if (!list.length) return '';
+  return `<div class="panel to-beat">
+    <strong>⚔️ Teams to beat in this match</strong>
+    <ul>${list.map(t => `<li>${esc(t.name)}${t.champ ? ' <span class="badge-champ">👑 Champion of the week</span>' : ''}${t.wins ? ` <span class="badge-wins">🏆 ${t.wins} ${t.wins === 1 ? 'win' : 'wins'}</span>` : ''}</li>`).join('')}</ul>
+    <p class="meta">Wins in the last 30 days. Knock them off the top!</p>
+  </div>`;
 }
 
 function channelLink() {
@@ -230,12 +228,13 @@ async function myRegistration() {
 
 async function render() {
   // Everything in one round trip; results and room are simply empty when not relevant.
-  const [m, teams, results, room, [saved, reg]] = await Promise.all([
+  const [m, teams, results, room, [saved, reg], form] = await Promise.all([
     api.getMatch(id),
     api.listRegistrations(id),
     api.getResults(id),
     api.getRoom(id, loadSaved()?.token),
     myRegistration(),
+    teamForm(),
   ]);
   if (!m) {
     el.innerHTML = '<h1>Match not found</h1><p><a href="index.html">See all matches</a></p>';
@@ -274,6 +273,7 @@ async function render() {
     ${done ? `<h2>Results</h2>${mvpLine(m)}${resultsTable(results)}` : ''}
     ${room ? `<div class="panel" id="room">${roomHtml(room, mine, m)}</div>` : ''}
     <div id="mine">${regPanel(m, mine)}</div>
+    ${!done ? toBeatHtml(teamsToBeat(form, teams.map(t => t.team_name))) : ''}
     ${canRegister && !mine ? registerForm(m, expired ? '<p class="error">Your 15-minute payment window ended, so the slot was released. You can register again.</p>' : '') : ''}
     ${!mine && !done && m.status !== 'cancelled' ? findForm() : ''}
     ${liveNow(m) ? `<a class="btn btn-yt btn-live" href="${esc(liveUrl(m))}" target="_blank" rel="noopener">🔴 Watch live on YouTube</a>` : ''}
@@ -284,7 +284,7 @@ async function render() {
     </div>
     ${m.rules ? `<h2>Rules</h2><p class="rules">${esc(m.rules)}</p>` : ''}
     <h2>Registered ${unit(m.mode, 2)} (${teams.length})</h2>
-    ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}${m.checkin_required && t.checked_in ? ' <span class="success" title="Checked in">✓</span>' : ''}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}
+    ${teams.length ? `<ul class="teams">${teams.map(t => `<li><span class="slot">#${t.slot_no}</span> ${esc(t.team_name)}${formBadges(form, t.team_name)}${m.checkin_required && t.checked_in ? ' <span class="success" title="Checked in">✓</span>' : ''}</li>`).join('')}</ul>` : '<p class="empty">No confirmed registrations yet. Be the first.</p>'}
     ${m.waitlist && !done ? `<p class="meta">${m.waitlist} team(s) on the waitlist.</p>` : ''}`;
 
   $('#register')?.addEventListener('submit', e => submit(e, m));
@@ -385,21 +385,16 @@ function tick(m, room, mine) {
   }, 1000);
 }
 
-function readPlayers(form) {
-  const igns = [...form.querySelectorAll('[name="ign"]')].map(i => i.value.trim());
-  const ids = [...form.querySelectorAll('[name="bgmi_id"]')].map(i => i.value.trim());
-  return igns.map((ign, i) => ({ ign, bgmi_id: ids[i] }));
-}
 
 async function submit(e, m) {
   e.preventDefault();
   const form = e.target;
   const msg = $('#register-msg');
   const btn = form.querySelector('button[type=submit]');
-  const players = readPlayers(form);
   btn.disabled = true;
   msg.innerHTML = '';
   try {
+    const players = readPlayers(form, m.mode);
     const res = await api.register(m.id, {
       team_name: m.mode === 'solo' ? players[0].ign : form.team_name.value,
       phone: form.phone.value.trim(),
@@ -436,9 +431,9 @@ async function saveEdit(e, m, saved) {
   e.preventDefault();
   const form = e.target;
   const btn = form.querySelector('button[type=submit]');
-  const players = readPlayers(form);
   btn.disabled = true;
   try {
+    const players = readPlayers(form, m.mode);
     const team_name = m.mode === 'solo' ? players[0].ign : form.team_name.value.trim();
     await api.editRegistration(saved.token, { team_name, players });
     rememberTeam(m.mode, { team_name, players });
