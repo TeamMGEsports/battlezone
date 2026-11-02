@@ -173,7 +173,7 @@ const remote = {
   async adminRegistrations(matchId) {
     await (await sb()).rpc('settle_match', { p_match_id: matchId });
     return unwrap(await (await sb()).from('registrations')
-      .select('*, players:registration_players(ign, bgmi_id), result:results(placement, kills, points, prize, paid_at, paid_ref, paid_amount)')
+      .select('*, players:registration_players(ign, bgmi_id, is_sub), result:results(placement, kills, points, prize, paid_at, paid_ref, paid_amount)')
       .eq('match_id', matchId).order('slot_no'));
   },
   async setRegistrationStatus(id, status) {
@@ -191,7 +191,9 @@ const remote = {
     }).select().single();
     if (error) throw new Error(friendly(error.message));
     const added = await c.from('registration_players')
-      .insert(players.map(p => ({ registration_id: reg.id, match_id: m.id, ign: p.ign, bgmi_id: p.bgmi_id })));
+      .insert(players.map((p, i) => ({
+        registration_id: reg.id, match_id: m.id, ign: p.ign, bgmi_id: p.bgmi_id, is_sub: i >= PLAYERS_PER_MODE[m.mode],
+      })));
     if (added.error) {
       await c.from('registrations').delete().eq('id', reg.id);
       throw new Error(friendly(added.error.message));
@@ -345,7 +347,8 @@ const clone = v => JSON.parse(JSON.stringify(v));
 // Same checks as check_team() and the unique rules in the database.
 function checkTeam(m, team_name, players) {
   const needed = PLAYERS_PER_MODE[m.mode];
-  if (players.length !== needed) throw new Error(`This match needs ${needed} player(s)`);
+  const subs = m.mode === 'squad' ? 1 : 0; // same rule as check_team() in 008
+  if (players.length < needed || players.length > needed + subs) throw new Error(`This match needs ${needed} player(s)`);
   team_name = team_name.trim();
   if (team_name.length < 2 || team_name.length > 30) throw new Error('Team name must be 2–30 characters');
   for (const p of players) {
@@ -354,6 +357,9 @@ function checkTeam(m, team_name, players) {
   }
   return team_name;
 }
+// Same as add_players() in 008: anyone after the players the mode needs is a substitute.
+const teamPlayers = (m, players) =>
+  players.map((p, i) => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id, is_sub: i >= PLAYERS_PER_MODE[m.mode] }));
 function checkDuplicates(others, team_name, players) {
   if (others.some(r => r.team_name.toLowerCase() === team_name.toLowerCase())) throw new Error('This team name is already taken for this match');
   const ids = new Set(others.flatMap(r => r.players.map(p => p.bgmi_id)));
@@ -467,7 +473,7 @@ const demo = {
       id: ++db.seq, match_id: matchId, slot_no: null, team_name, phone, status: null,
       created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: device,
       hold_until: status === 'pending' && paid ? new Date(Date.now() + HOLD_MS).toISOString() : null, checked_in_at: null, yt_handle,
-      players: players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id })),
+      players: teamPlayers(m, players),
     };
     setStatus(reg, status);
     db.registrations.push(reg);
@@ -481,7 +487,7 @@ const demo = {
     team_name = checkTeam(m, team_name, players);
     checkDuplicates(db.registrations.filter(x => x.match_id === r.match_id && x !== r), team_name, players);
     r.team_name = team_name;
-    r.players = players.map(p => ({ ign: p.ign.trim(), bgmi_id: p.bgmi_id }));
+    r.players = teamPlayers(m, players);
     persist();
   },
   async cancelRegistration(token) {
@@ -633,7 +639,7 @@ const demo = {
       id: ++db.seq, match_id: m.id, slot_no: null, team_name, phone, status: null,
       created_at: new Date().toISOString(), pay_token: crypto.randomUUID(), utr: null, device_id: null,
       hold_until: null, checked_in_at: m.checkin_required ? new Date().toISOString() : null, yt_handle: yt_handle || null,
-      players: players.map(p => ({ ign: p.ign, bgmi_id: p.bgmi_id })),
+      players: teamPlayers(m, players),
     };
     setStatus(reg, 'confirmed');
     db.registrations.push(reg);

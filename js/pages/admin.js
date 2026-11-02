@@ -1,7 +1,7 @@
-import { api, isDemo, resetDemo, amountOf, PLAYERS_PER_MODE } from '../api.js';
+import { api, isDemo, resetDemo, amountOf } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, ytHandle, subBadge, paidTag } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, ytHandle, subBadge, paidTag, playerFieldsets, readPlayers, subMark } from '../ui.js';
 
 initShell('admin');
 
@@ -15,11 +15,17 @@ const toInput = iso => new Date(iso).toLocaleString('sv-SE', { timeZone: 'Asia/K
 const fromInput = v => new Date(`${v}:00+05:30`).toISOString();
 const options = (list, cur, label = x => x) => list.map(v => `<option value="${v}"${v === cur ? ' selected' : ''}>${label(v)}</option>`).join('');
 
+// Runs an event handler and shows any error. The handler starts right away, so
+// e.preventDefault() still works; both normal and async handlers are fine.
 function guard(fn) {
-  return (...args) => fn(...args).catch(err => {
-    const box = $('#msg') || el;
-    showError(box, err);
-  });
+  const fail = err => showError($('#msg') || el, err);
+  return (...args) => {
+    try {
+      return Promise.resolve(fn(...args)).catch(fail);
+    } catch (err) {
+      fail(err);
+    }
+  };
 }
 
 // ---------- sign in ----------
@@ -283,7 +289,7 @@ async function showTeams(m) {
         return `
         <tr${['rejected', 'released'].includes(r.status) ? ' style="opacity:.5"' : ''}>
           <td>${r.slot_no ?? '–'}</td><td>${esc(r.team_name)}${r.yt_handle ? `<br><a href="${esc(ytLink(r.yt_handle))}" target="_blank" rel="noopener">${esc(r.yt_handle)}</a>` : ''}</td>
-          <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta">${esc(p.bgmi_id)}</span>`).join('<br>')}</td>
+          <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta">${esc(p.bgmi_id)}</span>${subMark(p)}`).join('<br>')}</td>
           <td><a href="https://wa.me/91${esc(r.phone)}" target="_blank" rel="noopener">${esc(r.phone)}</a></td>
           <td><span class="tag tag-${tone}">${state}</span>${r.utr ? `<br><span class="mono">${esc(r.utr)}</span>` : ''}
             ${m.checkin_required && r.status === 'confirmed' ? `<br><span class="meta">${r.checked_in_at ? '✓ checked in' : 'not checked in'}</span>` : ''}</td>
@@ -326,7 +332,7 @@ async function showTeams(m) {
 async function showRoomCheck(m) {
   const regs = (await api.adminRegistrations(m.id)).filter(r => r.status === 'confirmed');
   const text = `${m.title} — slot list\n` + regs.map(r =>
-    `${r.slot_no}. ${r.team_name}: ${r.players.map(p => `${p.ign} (${p.bgmi_id})`).join(', ')}`).join('\n');
+    `${r.slot_no}. ${r.team_name}: ${r.players.map(p => `${p.ign} (${p.bgmi_id})${p.is_sub ? ' [sub]' : ''}`).join(', ')}`).join('\n');
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
     <h1>Room check: ${esc(m.title)}</h1>
@@ -337,7 +343,7 @@ async function showRoomCheck(m) {
       <thead><tr><th>Slot</th><th>Team</th><th>Players (IGN · BGMI ID)</th></tr></thead>
       <tbody>${regs.map(r => `
         <tr><td><strong>${r.slot_no}</strong></td><td>${esc(r.team_name)}${r.yt_handle ? `<br><span class="meta">${esc(r.yt_handle)}</span>` : ''}</td>
-        <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta mono">${esc(p.bgmi_id)}</span>`).join('<br>')}</td></tr>`).join('')
+        <td>${r.players.map(p => `${esc(p.ign)} · <span class="meta mono">${esc(p.bgmi_id)}</span>${subMark(p)}`).join('<br>')}</td></tr>`).join('')
         || '<tr><td colspan="3" class="empty">No confirmed teams.</td></tr>'}
       </tbody>
     </table></div>`;
@@ -634,7 +640,6 @@ function showNotice(m) {
 
 // ---------- late entry ----------
 function showAddTeam(m) {
-  const n = PLAYERS_PER_MODE[m.mode];
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Teams</a></p>
     <h1>Add team: ${esc(m.title)}</h1>
@@ -643,13 +648,7 @@ function showAddTeam(m) {
       ${m.mode === 'solo' ? '' : '<label>Team name<input name="team_name" required minlength="2" maxlength="30"></label>'}
       <label>Captain’s WhatsApp number<input name="phone" required inputmode="tel" pattern="[6-9][0-9]{9}" title="10-digit mobile number"></label>
       ${m.subscriber_only ? '<label>Captain’s YouTube handle (optional)<input name="yt_handle" placeholder="@name"></label>' : ''}
-      ${Array.from({ length: n }, (_, i) => `
-        <fieldset><legend>${n === 1 ? 'Player' : i === 0 ? 'Player 1 (captain)' : `Player ${i + 1}`}</legend>
-          <div class="row">
-            <label>In-game name<input name="ign" required maxlength="20"></label>
-            <label>BGMI character ID<input name="bgmi_id" required inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits"></label>
-          </div>
-        </fieldset>`).join('')}
+      ${playerFieldsets(m.mode)}
       <div class="actions"><button class="btn btn-primary">Add team</button></div>
       <div id="msg"></div>
     </form>`;
@@ -657,11 +656,9 @@ function showAddTeam(m) {
   $('#add').addEventListener('submit', guard(async e => {
     e.preventDefault();
     const f = e.target;
-    const igns = [...f.querySelectorAll('[name=ign]')].map(i => i.value.trim());
-    const ids = [...f.querySelectorAll('[name=bgmi_id]')].map(i => i.value.trim());
-    const players = igns.map((ign, i) => ({ ign, bgmi_id: ids[i] }));
+    const players = readPlayers(f, m.mode);
     const slot = await api.adminAddTeam(m, {
-      team_name: m.mode === 'solo' ? igns[0] : f.team_name.value.trim(),
+      team_name: m.mode === 'solo' ? players[0].ign : f.team_name.value.trim(),
       phone: f.phone.value.trim(), players,
       yt_handle: f.yt_handle?.value.trim() ? ytHandle(f.yt_handle.value) : null,
     });

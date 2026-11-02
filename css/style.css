@@ -204,3 +204,13 @@ label.ql { grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; ma
 .payout { display: flex; justify-content: space-between; align-items: center; gap: .75rem; flex-wrap: wrap; padding: .6rem 0; border-top: 1px solid var(--line); }
 .payout input { padding: .35rem .5rem; }
 .foot nav { display: flex; gap: 1rem; flex-wrap: wrap; margin-top: .4rem; }
+
+/* Champions */
+.to-beat { border-color: #d4a017; box-shadow: 0 0 0 1px rgba(212, 160, 23, .25); }
+.to-beat ul, .to-beat ol { margin: .5rem 0; padding-left: 1.25rem; }
+.to-beat li { padding: .15rem 0; }
+.badge-champ, .badge-wins { font-size: .72rem; font-weight: 600; white-space: nowrap; padding: .05rem .4rem; border-radius: 999px; border: 1px solid; }
+.badge-champ { color: #b8860b; border-color: #d4a017; }
+.badge-wins { color: var(--muted); border-color: var(--line); }
+@media (prefers-color-scheme: dark) { .badge-champ { color: #f5c542; } }
+fieldset.sub { border-style: dashed; }

@@ -1,6 +1,6 @@
 // Shared helpers for all pages.
 import { CONFIG } from './config.js';
-import { isDemo, WAITLIST_MAX, registrationOpen } from './api.js';
+import { api, isDemo, WAITLIST_MAX, registrationOpen, PLAYERS_PER_MODE } from './api.js';
 
 export const $ = (sel, ctx = document) => ctx.querySelector(sel);
 
@@ -62,6 +62,71 @@ export function statsLine(s) {
   const n = (v, one, many) => `<strong>${v.toLocaleString('en-IN')}</strong> ${v === 1 ? one : many}`;
   return `${n(s.matches_hosted, 'match hosted', 'matches hosted')} · ${n(s.players, 'player', 'players')}`
     + (s.winners_paid ? ` · <strong>₹${s.amount_paid.toLocaleString('en-IN')}</strong> paid to ${s.winners_paid} ${s.winners_paid === 1 ? 'winner' : 'winners'}` : '');
+}
+
+// Squads may add one substitute (the 5th player). Keep in sync with check_team() in 008.
+export const SUBS = { squad: 1 };
+
+// Player name + BGMI ID fields for a team, prefilled from `players` when editing.
+export function playerFieldsets(mode, players = []) {
+  const n = PLAYERS_PER_MODE[mode];
+  return Array.from({ length: n + (SUBS[mode] || 0) }, (_, i) => {
+    const p = players[i] || {};
+    const sub = i >= n;
+    const legend = sub ? 'Substitute (optional)' : n === 1 ? 'Player' : i === 0 ? 'Player 1 (captain)' : `Player ${i + 1}`;
+    return `
+    <fieldset${sub ? ' class="sub"' : ''}>
+      <legend>${legend}</legend>
+      <div class="row">
+        <label>In-game name<input name="ign"${sub ? '' : ' required'} maxlength="20" autocomplete="off" value="${esc(p.ign || '')}"></label>
+        <label>BGMI character ID<input name="bgmi_id"${sub ? '' : ' required'} inputmode="numeric" pattern="[0-9]{6,12}" title="6–12 digits" autocomplete="off" value="${esc(p.bgmi_id || '')}"></label>
+      </div>
+    </fieldset>`;
+  }).join('');
+}
+
+// Reads the player fields. An empty substitute is left out; a half-filled one is an error.
+export function readPlayers(form, mode) {
+  const n = PLAYERS_PER_MODE[mode];
+  const igns = [...form.querySelectorAll('[name="ign"]')].map(i => i.value.trim());
+  const ids = [...form.querySelectorAll('[name="bgmi_id"]')].map(i => i.value.trim());
+  return igns.map((ign, i) => ({ ign, bgmi_id: ids[i] })).filter((p, i) => {
+    if (i < n) return true;
+    if (!p.ign && !p.bgmi_id) return false;
+    if (!p.ign || !p.bgmi_id) throw new Error('The substitute needs both an in-game name and a BGMI ID');
+    return true;
+  });
+}
+
+export const subMark = p => p.is_sub ? ' <span class="tag tag-muted">Sub</span>' : '';
+
+// Team form from the leaderboard: wins in the last 30 days, and the #1 team
+// of the last 7 days. Fetched once per page; empty if it can't load.
+let formPromise;
+export function teamForm() {
+  const since = days => new Date(Date.now() - days * 864e5).toISOString();
+  formPromise ||= Promise.all([api.leaderboard(since(30)), api.leaderboard(since(7))])
+    .then(([month, week]) => ({
+      wins: Object.fromEntries(month.map(r => [r.team_name.toLowerCase(), r.wins])),
+      champion: week[0]?.wins > 0 ? week[0].team_name.toLowerCase() : null,
+      week,
+    }))
+    .catch(() => ({ wins: {}, champion: null, week: [] }));
+  return formPromise;
+}
+export function formBadges(form, name) {
+  const key = (name || '').toLowerCase();
+  const wins = form.wins[key] || 0;
+  return (form.champion === key ? ' <span class="badge-champ">👑 Champion of the week</span>' : '')
+    + (wins >= 2 ? ` <span class="badge-wins">🏆 ${wins} wins</span>` : '');
+}
+// Registered teams worth calling out: the weekly champion or 2+ wins in 30 days.
+export function teamsToBeat(form, names) {
+  return names
+    .map(n => ({ name: n, wins: form.wins[n.toLowerCase()] || 0, champ: form.champion === n.toLowerCase() }))
+    .filter(t => t.champ || t.wins >= 2)
+    .sort((a, b) => b.champ - a.champ || b.wins - a.wins)
+    .slice(0, 3);
 }
 
 export const subBadge = '<span class="tag tag-yt">Subscribers only</span>';
