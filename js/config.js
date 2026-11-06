@@ -6,7 +6,7 @@ export const CONFIG = {
   whatsappGroup: 'https://chat.whatsapp.com/HZrLR0uH3BgJH1Zapbz6yn',
   // UPI details for paid matches (entry fee above ₹0). A UPI business ID
   // works best: some apps limit pay links to personal UPI IDs.
-  upiId: 'deepakgandla@ybl',
+  upiId: '7680074168@ybl',
   upiName: 'TeamMG Esports',
   // YouTube channel for subscriber-only matches (full link, e.g. https://www.youtube.com/@teammg).
   // Organizer WhatsApp number for "Report a problem" and the About page,
