@@ -260,7 +260,7 @@ const remote = {
 // Demo mode: same behaviour as the database, stored in localStorage
 // ---------------------------------------------------------------
 
-const DEMO_KEY = 'tmg-demo-v6';
+const DEMO_KEY = 'tmg-demo-v7';
 const HOLD_MS = 15 * 60e3; // keep in sync with register_team() in 002_paid_entry.sql
 
 function istAt(dayOffset, time) {
@@ -289,6 +289,7 @@ function seed() {
     prize_1: 250, prize_2: 150, prize_3: 75, prize_mvp: 50, prize_pool: null, per_kill: null,
   }));
   Object.assign(db.matches[0], { checkin_required: true, notice: '⏱ Delayed by 10 min' });
+  db.matches.push({ id: 7, title: 'WOW 4v4 Showdown', mode: 'squad', map: 'WOW', starts_at: istAt(1, '21:30'), max_slots: 2, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 0, reg_close_minutes: 30, checkin_required: false, prize_1: 300, format: 'tvt' });
   db.matches.push({ id: 6, title: 'Subscriber Squad Cup', mode: 'squad', map: 'Erangel', starts_at: istAt(1, '20:00'), max_slots: 20, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 0, reg_close_minutes: 30, checkin_required: false, prize_1: 500, prize_2: 300, prize_3: 150, prize_mvp: 100, subscriber_only: true });
   db.matches.push({ id: 5, title: 'Paid Solo Cup', mode: 'solo', map: 'Erangel', starts_at: istAt(1, '22:30'), max_slots: 50, prize_pool: null, per_kill: null, rules, status: 'open', entry_fee: 20, reg_close_minutes: 30, checkin_required: false, prize_1: 400, prize_2: 200, prize_3: 100, prize_mvp: 100 });
   const teams = ['Clutch Gods', 'Rush Mode', 'Silent Snipers', 'Zone Kings', 'Last Circle', 'Hot Drop', 'Pan Masters', 'Red Zone'];

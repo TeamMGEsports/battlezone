@@ -1,16 +1,18 @@
 // Ready-to-paste WhatsApp messages for the admin page.
 import { CONFIG } from './config.js';
 import { CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN, regCloseMinutes } from './api.js';
-import { dayLabel, fmtTime, fmtDate, MODE, prizeLines, hasPrizes } from './ui.js';
+import { dayLabel, fmtTime, fmtDate, MODE, prizeLines, hasPrizes, isTvt, modeLabel } from './ui.js';
 
 const base = () => new URL('.', location.href).href;
 export const matchUrl = m => `${base()}match.html?id=${m.id}`;
 const minsBefore = (m, mins) => new Date(Date.parse(m.starts_at) - mins * 60e3).toISOString();
-const prizeText = m => hasPrizes(m) ? prizeLines(m).join(' · ') : m.prize_pool || '';
+const prizeText = m => isTvt(m) && m.prize_1 ? `Winner takes ₹${m.prize_1}`
+  : hasPrizes(m) ? prizeLines(m).join(' · ') : m.prize_pool || '';
 
 export function registrationPost(m) {
   return [
-    `🎮 *${m.title}*: ${MODE[m.mode]} · ${m.map}`,
+    isTvt(m) ? `⚔️ *${m.title}*: ${modeLabel(m)} · ${m.map}` : `🎮 *${m.title}*: ${MODE[m.mode]} · ${m.map}`,
+    isTvt(m) ? 'Two teams, one winner. Only 2 slots, first come first served!' : null,
     m.subscriber_only ? `🔴 *YouTube subscribers only*${CONFIG.youtubeChannel ? `: subscribe ${CONFIG.youtubeChannel}` : ''}. Register with the captain’s YouTube handle.` : null,
     `🕘 ${dayLabel(m.starts_at)}, ${fmtTime(m.starts_at)} IST`,
     `💰 Entry: ${m.entry_fee > 0 ? `₹${m.entry_fee}` : 'Free'}`,
@@ -46,6 +48,18 @@ export function roomPost(m) {
 }
 
 export function resultsPost(m, results) {
+  if (isTvt(m)) {
+    const sorted = [...results].sort((a, b) => a.placement - b.placement);
+    const [won, lost] = sorted;
+    return [
+      `⚔️ *Result: ${m.title}* (${fmtDate(m.starts_at)})`,
+      won ? `🏆 *${won.team_name}*${lost ? ` beat ${lost.team_name}` : ' won'}${won.prize ? ` · ${won.prize}` : m.prize_1 ? ` · ₹${m.prize_1}` : ''}` : null,
+      m.mvp_ign ? `⭐ MVP: ${m.mvp_ign}${m.mvp_team ? ` (${m.mvp_team})` : ''}, ${m.mvp_kills ?? 0} kills${m.prize_mvp ? ` · ₹${m.prize_mvp}` : ''}` : null,
+      '',
+      'GG to both teams! Prizes are sent by UPI within 24 hours.',
+      `Full results: ${base()}results.html`,
+    ].filter(l => l !== null).join('\n');
+  }
   const medals = ['🥇', '🥈', '🥉'];
   const prizes = [m.prize_1, m.prize_2, m.prize_3];
   const top = [...results].sort((a, b) => a.placement - b.placement).filter(r => r.placement <= 3).map(r =>

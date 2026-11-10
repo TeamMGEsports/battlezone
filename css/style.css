@@ -214,3 +214,12 @@ label.ql { grid-template-columns: 7.5rem minmax(0, 1fr); align-items: center; ma
 .badge-wins { color: var(--muted); border-color: var(--line); }
 @media (prefers-color-scheme: dark) { .badge-champ { color: #f5c542; } }
 fieldset.sub { border-style: dashed; }
+
+/* Team vs Team */
+.tag-tvt { color: #7c3aed; }
+@media (prefers-color-scheme: dark) { .tag-tvt { color: #a78bfa; } }
+.versus { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: .75rem; text-align: center; }
+.vs { font-weight: 800; font-size: 1.1rem; color: var(--accent); }
+.vs-team { padding: .75rem .5rem; border: 1px solid var(--line); border-radius: var(--radius); overflow-wrap: anywhere; }
+.vs-open { color: var(--muted); border-style: dashed; }
+.vs-won { border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok); }
