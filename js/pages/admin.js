@@ -1,12 +1,12 @@
 import { api, isDemo, resetDemo, amountOf } from '../api.js';
 import { CONFIG } from '../config.js';
 import { registrationPost, checkinPost, roomPost, resultsPost, tonightPost, leaderboardPost } from '../posts.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, ytHandle, subBadge, paidTag, playerFieldsets, readPlayers, subMark } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, statusLabel, feeLabel, showError, shareLink, hasPrizes, prizeShort, ytLink, ytHandle, subBadge, paidTag, playerFieldsets, readPlayers, subMark, isTvt, tvtBadge, modeLabel } from '../ui.js';
 
 initShell('admin');
 
 const el = $('#admin');
-const MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Livik', 'Karakin', 'Nusa', 'Rondo'];
+const MAPS = ['Erangel', 'Miramar', 'Sanhok', 'Vikendi', 'Livik', 'Karakin', 'Nusa', 'Rondo', 'WOW'];
 const STATUSES = ['open', 'closed', 'live', 'completed', 'cancelled'];
 const DEFAULT_RULES = 'No emulators.\nNo teaming with other squads.\nJoin the room 5 minutes before start.\nCaptain posts the result screenshot in the WhatsApp group.';
 
@@ -72,8 +72,8 @@ function adminCard(m) {
           <strong>${esc(fmtTime(m.starts_at))}</strong>
         </div>
         <div class="am-info">
-          <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</div>
-          <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}${m.checkin_required ? ' · Check-in' : ''}</div>
+          <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${tvtBadge(m)}${m.subscriber_only ? ` ${subBadge}` : ''}</div>
+          <div class="meta">${modeLabel(m)} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}${m.checkin_required ? ' · Check-in' : ''}</div>
           ${m.notice ? `<div class="meta notice-line">${esc(m.notice)}</div>` : ''}
         </div>
         <div class="am-slots">
@@ -172,6 +172,10 @@ async function showEditor(m, template, dayShift = 0) {
     <form id="edit" class="panel">
       <h1>${m ? 'Edit match' : 'New match'}</h1>
       <label>Title<input name="title" required maxlength="60" value="${esc(src.title || '')}" placeholder="Night Squad #1"></label>
+      <label>Format<select name="format">
+        <option value="br"${isTvt(src) ? '' : ' selected'}>Battle royale (normal lobby)</option>
+        <option value="tvt"${isTvt(src) ? ' selected' : ''}>⚔️ Team vs Team (e.g. WOW): 2 teams, winner takes the prize</option>
+      </select></label>
       <div class="row">
         <label>Mode<select name="mode">${options(Object.keys(MODE), src.mode || 'squad', v => MODE[v])}</select></label>
         <label>Map<select name="map">${options(MAPS, src.map || 'Erangel')}</select></label>
@@ -193,9 +197,10 @@ async function showEditor(m, template, dayShift = 0) {
         <label>Per kill (optional)<input name="per_kill" value="${esc(src.per_kill || '')}" placeholder="₹10"></label>
       </fieldset>
       <div class="row">
-        <label>Entry fee in ₹ (0 = free)<input name="entry_fee" type="number" min="0" max="10000" required value="${src.entry_fee ?? 0}"></label>
+        <label>Entry fee in ₹ per team (0 = free)<input name="entry_fee" type="number" min="0" max="10000" required value="${src.entry_fee ?? 0}"></label>
         <label>Status<select name="status">${options(STATUSES, m ? m.status : 'open', v => v[0].toUpperCase() + v.slice(1))}</select></label>
       </div>
+      <p class="meta" id="host-share"></p>
       ${CONFIG.upiId ? '' : '<p class="meta">Paid matches need your UPI ID in js/config.js before players can pay.</p>'}
       <label>Registration closes this many minutes before start<input name="reg_close_minutes" type="number" min="0" max="600" required value="${src.reg_close_minutes ?? 30}"></label>
       <label class="check"><input type="checkbox" name="subscriber_only"${src.subscriber_only ? ' checked' : ''}>
@@ -219,6 +224,31 @@ async function showEditor(m, template, dayShift = 0) {
       </div>
       <div id="msg"></div>
     </form>`;
+  const ef = $('#edit');
+  // Team vs Team: 2 slots and the WOW map by default.
+  ef.format.addEventListener('change', () => {
+    if (ef.format.value === 'tvt') {
+      ef.max_slots.value = 2;
+      ef.map.value = 'WOW';
+    } else if (Number(ef.max_slots.value) === 2) {
+      ef.max_slots.value = 25;
+    }
+    hostShare();
+  });
+  // What a full lobby collects, what goes out as prizes, and what's left for the host.
+  const hostShare = () => {
+    const fee = Number(ef.entry_fee.value || 0);
+    const box = $('#host-share');
+    if (!fee) { box.textContent = ''; return; }
+    const collected = fee * Number(ef.max_slots.value || 0);
+    const prizes = ['prize_1', 'prize_2', 'prize_3', 'prize_mvp'].reduce((t, k) => t + Number(ef[k].value || 0), 0);
+    const share = collected - prizes;
+    box.innerHTML = share >= 0
+      ? `Full lobby collects <strong>₹${collected}</strong> · prizes <strong>₹${prizes}</strong> · your share <strong>₹${share}</strong>${collected ? ` (${Math.round(share / collected * 100)}%)` : ''}`
+      : `<span class="error">Prizes are ₹${-share} more than a full lobby collects (₹${collected}).</span>`;
+  };
+  ef.addEventListener('input', hostShare);
+  hostShare();
   $('#back').addEventListener('click', guard(async e => { e.preventDefault(); await showList(); }));
   $('#delete')?.addEventListener('click', guard(async () => {
     if (!confirm(`Delete "${m.title}" with all its registrations and results? This cannot be undone.`)) return;
@@ -241,6 +271,7 @@ async function showEditor(m, template, dayShift = 0) {
       ...prizes, prize_pool: hasPrizes(prizes) ? null : src.prize_pool ?? null,
       checkin_required: f.checkin_required.checked,
       subscriber_only: f.subscriber_only.checked,
+      format: f.format.value,
       status: f.status.value, rules: f.rules.value.trim() || null, entry_fee: Number(f.entry_fee.value || 0),
       reg_close_minutes: Number(f.reg_close_minutes.value || 0),
       live_url: f.live_url.value.trim() || null,
@@ -463,7 +494,10 @@ async function showResults(m) {
   const placed = n => regs.find(r => r.result?.placement === n)?.id ?? '';
   const teamOptions = sel => `<option value="">–</option>` + regs.map(r =>
     `<option value="${r.id}"${r.id === sel ? ' selected' : ''}>#${r.slot_no} ${esc(r.team_name)}</option>`).join('');
-  const medals = { 1: '🥇 1st', 2: '🥈 2nd', 3: '🥉 3rd' };
+  // Team vs Team only needs the winner; the other team is recorded as 2nd.
+  const tvt = isTvt(m);
+  const PLACES = tvt ? [1] : [1, 2, 3];
+  const medals = tvt ? { 1: '🏆 Winner' } : { 1: '🥇 1st', 2: '🥈 2nd', 3: '🥉 3rd' };
   const fullOpen = regs.some(r => r.result?.placement > 3 || r.result?.kills > 0);
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
@@ -471,7 +505,7 @@ async function showResults(m) {
     <form id="results">
       <div class="panel">
         <h3>Winners</h3>
-        ${[1, 2, 3].map(n => `
+        ${PLACES.map(n => `
           <label class="ql"><span>${medals[n]}${placePrize[n] ? ` <span class="meta">₹${placePrize[n]}</span>` : ''}</span>
             <select name="q${n}" data-place="${n}">${teamOptions(placed(n))}</select></label>`).join('')}
         <div class="row">
@@ -507,9 +541,11 @@ async function showResults(m) {
   // Winners picks write places 1-3 into the full table; the table writes back.
   const applyQuick = () => {
     rows().forEach(tr => { if ([1, 2, 3].includes(Number(place(tr).value))) place(tr).value = ''; });
-    [1, 2, 3].forEach(n => { if (quick(n).value) place(row(quick(n).value)).value = n; });
+    PLACES.forEach(n => { if (quick(n).value) place(row(quick(n).value)).value = n; });
+    // Team vs Team: the other team finished 2nd.
+    if (tvt && quick(1).value) rows().filter(tr => tr.dataset.id !== quick(1).value).forEach(tr => { place(tr).value = 2; });
   };
-  const syncQuick = () => [1, 2, 3].forEach(n => {
+  const syncQuick = () => PLACES.forEach(n => {
     quick(n).value = rows().find(tr => Number(place(tr).value) === n)?.dataset.id ?? '';
   });
   let mvpTouched = Boolean(curMvp);
@@ -533,7 +569,7 @@ async function showResults(m) {
     const n = Number(e.target.dataset.place);
     if (!n) return;
     // The same team can't hold two places.
-    [1, 2, 3].forEach(o => { if (o !== n && quick(o).value === e.target.value) quick(o).value = ''; });
+    PLACES.forEach(o => { if (o !== n && quick(o).value === e.target.value) quick(o).value = ''; });
     applyQuick();
     update();
   });
@@ -561,7 +597,7 @@ async function showResults(m) {
         return old?.paid_at && old.prize === r.prize
           ? { ...r, paid_at: old.paid_at, paid_ref: old.paid_ref, paid_amount: old.paid_amount } : r;
       });
-    if (!data.length) throw new Error('Pick at least the 1st place team.');
+    if (!data.length) throw new Error(tvt ? 'Pick the winning team.' : 'Pick at least the 1st place team.');
     const places = data.map(r => r.placement);
     if (new Set(places).size !== places.length) throw new Error('Two teams have the same place.');
     let mvp = null;

@@ -117,6 +117,14 @@ After a captain registers, their phone remembers the team (per mode: solo, duo, 
 - **Substitute:** squads can add an optional 5th player. Subs follow the same rules as everyone else (valid BGMI ID, not banned, not in another team for that match) and are marked **Sub** in Teams and Room check. Database update: `supabase/migrations/008_substitutes.sql`.
 - **Champion badges:** on the match page, the #1 team of the week gets **👑 Champion of the week** and teams with 2+ wins in the last 30 days get **🏆 N wins**. A **⚔️ Teams to beat in this match** box sits above the registration form, and the home page shows **🔥 Teams to beat this week** (top 3).
 
+## Team vs Team (WOW)
+
+- In the match editor, set **Format → Team vs Team**. It sets 2 slots and the WOW map. Team size follows the mode: Solo = 1v1, Duo = 2v2, Squad = 4v4.
+- The match page shows a **Team A VS Team B** panel that fills in as teams register, and "Winner takes ₹X" (the 1st prize).
+- **Results:** pick only the winner; the other team is recorded as 2nd. Wins count on the leaderboard as usual.
+- **Host share:** for paid matches the editor shows what a full lobby collects, the prizes, and what's left for you, e.g. "₹200 collected · ₹160 prizes · your share ₹40 (20%)".
+- Database update: `supabase/migrations/009_team_vs_team.sql`.
+
 ## Releasing an update
 
 Browsers keep copies of the site's files. Each page loads its files with a version number (`?v=...`), so after changing any CSS or JavaScript run:

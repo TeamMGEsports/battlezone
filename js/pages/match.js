@@ -1,6 +1,6 @@
 import { api, PLAYERS_PER_MODE, registrationOpen, regCloseMinutes, CHECKIN_OPENS_MIN, CHECKIN_CLOSES_MIN } from '../api.js';
 import { CONFIG } from '../config.js';
-import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge, liveNow, liveUrl, noticeHtml, playerFieldsets, readPlayers, teamForm, formBadges, teamsToBeat } from '../ui.js';
+import { $, esc, initShell, dayLabel, fmtTime, countdown, MODE, unit, statusLabel, feeLabel, resultsTable, shareLink, showError, hasPrizes, prizeLines, prizeShort, mvpLine, waitlistOpen, ytHandle, ytLink, subBadge, liveNow, liveUrl, noticeHtml, playerFieldsets, readPlayers, teamForm, formBadges, teamsToBeat, isTvt, tvtBadge, modeLabel } from '../ui.js';
 
 initShell('home');
 
@@ -74,6 +74,18 @@ function reportLink(m, mine) {
     'Issue: ',
   ].filter(Boolean).join('\n');
   return `https://wa.me/${CONFIG.adminWhatsApp}?text=${encodeURIComponent(text)}`;
+}
+
+// Team vs Team face-off: slot 1 against slot 2, filled in as teams register.
+function versusHtml(m, teams, results, form) {
+  const winner = results.find(r => r.placement === 1)?.team_name;
+  const side = n => {
+    const t = teams.find(x => x.slot_no === n);
+    if (!t) return '<div class="vs-team vs-open">Open slot</div>';
+    const won = winner && winner === t.team_name;
+    return `<div class="vs-team${won ? ' vs-won' : ''}">${won ? '🏆 ' : ''}<strong>${esc(t.team_name)}</strong>${formBadges(form, t.team_name)}</div>`;
+  };
+  return `<div class="panel versus">${side(1)}<div class="vs">VS</div>${side(2)}</div>`;
 }
 
 function toBeatHtml(list) {
@@ -250,18 +262,20 @@ async function render() {
   const expired = reg === 'expired';
   const mine = expired ? null : reg;
   const shareText = `${m.title} (${MODE[m.mode]}, ${m.map}, ${feeLabel(m)}${prizeShort(m) ? `, ${prizeShort(m)}` : ''}) — ${dayLabel(m.starts_at)} ${fmtTime(m.starts_at)} IST. Register here: ${location.href}`;
-  const prizeFacts = hasPrizes(m)
+  const prizeFacts = isTvt(m)
+    ? `<div class="fact"><span>Winner takes</span><strong>${m.prize_1 ? `₹${m.prize_1}` : esc(m.prize_pool || '–')}</strong></div>`
+    : hasPrizes(m)
     ? prizeLines(m).map(l => { const [k, v] = l.split(' '); return `<div class="fact"><span>${k} prize</span><strong>${v}</strong></div>`; }).join('')
     : `<div class="fact"><span>Prize pool</span><strong>${esc(m.prize_pool || '–')}</strong></div>`;
 
   el.innerHTML = `
     <p class="meta"><a href="index.html">← All matches</a></p>
-    <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}</h1>
+    <h1>${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${tvtBadge(m)}${m.subscriber_only ? ` ${subBadge}` : ''}</h1>
     ${noticeHtml(m)}
     <p class="lead">${esc(dayLabel(m.starts_at))}, ${esc(fmtTime(m.starts_at))} IST${!started && !done ? ` · starts in <span id="cd">${countdown(m.starts_at)}</span>` : ''}
       ${m.status === 'open' && !started ? `<br><span class="meta">Registration ${regOpen ? 'closes' : 'closed'} at ${esc(fmtTime(closesAt))} IST.</span>` : ''}</p>
     <div class="facts">
-      <div class="fact"><span>Mode</span><strong>${MODE[m.mode]}</strong></div>
+      <div class="fact"><span>Mode</span><strong>${modeLabel(m)}</strong></div>
       <div class="fact"><span>Map</span><strong>${esc(m.map)}</strong></div>
       <div class="fact"><span>Entry</span><strong>${m.entry_fee > 0 ? `₹${m.entry_fee}` : 'Free'}</strong></div>
       ${prizeFacts}
@@ -273,7 +287,8 @@ async function render() {
     ${done ? `<h2>Results</h2>${mvpLine(m)}${resultsTable(results)}` : ''}
     ${room ? `<div class="panel" id="room">${roomHtml(room, mine, m)}</div>` : ''}
     <div id="mine">${regPanel(m, mine)}</div>
-    ${!done ? toBeatHtml(teamsToBeat(form, teams.map(t => t.team_name))) : ''}
+    ${isTvt(m) ? versusHtml(m, teams, results, form) : ''}
+    ${!done && !isTvt(m) ? toBeatHtml(teamsToBeat(form, teams.map(t => t.team_name))) : ''}
     ${canRegister && !mine ? registerForm(m, expired ? '<p class="error">Your 15-minute payment window ended, so the slot was released. You can register again.</p>' : '') : ''}
     ${!mine && !done && m.status !== 'cancelled' ? findForm() : ''}
     ${liveNow(m) ? `<a class="btn btn-yt btn-live" href="${esc(liveUrl(m))}" target="_blank" rel="noopener">🔴 Watch live on YouTube</a>` : ''}

@@ -38,7 +38,15 @@ export function prizeLines(m) {
   return [['1st', m.prize_1], ['2nd', m.prize_2], ['3rd', m.prize_3], ['MVP', m.prize_mvp]]
     .filter(([, v]) => v > 0).map(([k, v]) => `${k} ₹${v}`);
 }
-export const prizeShort = m => hasPrizes(m) ? `Prizes ₹${prizeTotal(m)}` : m.prize_pool ? `Prize ${m.prize_pool}` : '';
+export const prizeShort = m => isTvt(m) && m.prize_1 ? `Winner takes ₹${m.prize_1}`
+  : hasPrizes(m) ? `Prizes ₹${prizeTotal(m)}` : m.prize_pool ? `Prize ${m.prize_pool}` : '';
+
+// Team vs Team (e.g. WOW modes): two teams, winner takes the prize.
+// Team size comes from the mode: solo 1v1, duo 2v2, squad 4v4.
+export const isTvt = m => m.format === 'tvt';
+export const tvtSize = m => `${PLAYERS_PER_MODE[m.mode]}v${PLAYERS_PER_MODE[m.mode]}`;
+export const tvtBadge = m => isTvt(m) ? ` <span class="tag tag-tvt">⚔️ ${tvtSize(m)}</span>` : '';
+export const modeLabel = m => isTvt(m) ? `${tvtSize(m)} Team vs Team` : MODE[m.mode];
 // Accepts "@name", "name" or a youtube.com/@name link and returns "@name".
 export function ytHandle(input) {
   const v = (input || '').trim().replace(/^https?:\/\/(www\.|m\.)?youtube\.com\//i, '').split(/[/?#]/)[0];
@@ -156,9 +164,9 @@ export function matchRow(m) {
         <strong>${esc(fmtTime(m.starts_at))}</strong>
       </div>
       <div class="match-body">
-        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${m.subscriber_only ? ` ${subBadge}` : ''}${liveNow(m) ? ' <span class="tag tag-yt">● Live</span>' : ''}</div>
+        <div class="match-title">${esc(m.title)} <span class="tag tag-${tone}">${label}</span>${tvtBadge(m)}${m.subscriber_only ? ` ${subBadge}` : ''}${liveNow(m) ? ' <span class="tag tag-yt">● Live</span>' : ''}</div>
         ${m.notice ? `<div class="meta notice-line">${esc(m.notice)}</div>` : ''}
-        <div class="meta">${MODE[m.mode]} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}</div>
+        <div class="meta">${modeLabel(m)} · ${esc(m.map)} · ${feeLabel(m)}${prizeShort(m) ? ` · ${esc(prizeShort(m))}` : ''}</div>
         <div class="bar" aria-hidden="true"><span style="width:${pct}%"></span></div>
         <div class="meta">${m.filled}/${m.max_slots} ${unit(m.mode, m.max_slots)}${m.waitlist ? ` · ${m.waitlist} on waitlist` : ''}</div>
       </div>
