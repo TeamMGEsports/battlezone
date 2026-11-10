@@ -161,12 +161,20 @@ async function showList() {
 }
 
 // ---------- create / edit ----------
+// A new match never starts in the past: it keeps the template's time of day,
+// on today if that time is still ahead, otherwise tomorrow (or later, for "Copy +1 day").
+function nextStart(iso, dayShift = 0) {
+  const time = toInput(iso).slice(11, 16);
+  let start = Date.parse(fromInput(`${toInput(new Date().toISOString()).slice(0, 10)}T${time}`));
+  if (start <= Date.now()) start += 864e5;
+  return new Date(Math.max(start, Date.parse(iso) + dayShift * 864e5)).toISOString();
+}
+
 async function showEditor(m, template, dayShift = 0) {
   const src = m || template || {};
   const room = m ? (await api.getRoomAdmin(m.id)) || {} : {};
-  const starts = src.starts_at
-    ? new Date(Date.parse(src.starts_at) + dayShift * 864e5).toISOString()
-    : fromInput(`${toInput(new Date().toISOString()).slice(0, 10)}T21:00`);
+  const starts = m ? m.starts_at
+    : nextStart(src.starts_at || fromInput(`${toInput(new Date().toISOString()).slice(0, 10)}T21:00`), dayShift);
   el.innerHTML = `
     <p class="meta"><a href="#" id="back">← Matches</a></p>
     <form id="edit" class="panel">
@@ -258,6 +266,9 @@ async function showEditor(m, template, dayShift = 0) {
   $('#edit').addEventListener('submit', guard(async e => {
     e.preventDefault();
     const f = e.target;
+    const past = Date.parse(fromInput(f.starts_at.value)) < Date.now();
+    const timeChanged = !m || f.starts_at.value !== toInput(m.starts_at);
+    if (past && timeChanged && !confirm('This start time has already passed, so players can’t register and the match will be listed under “Past”. Save anyway?')) return;
     const num = v => v === '' ? null : Number(v);
     const prizes = {
       prize_1: num(f.prize_1.value), prize_2: num(f.prize_2.value),
@@ -280,6 +291,7 @@ async function showEditor(m, template, dayShift = 0) {
       reveal_minutes: Number(f.reveal_minutes.value || 15),
     });
     await showList();
+    $('#msg').innerHTML = `<p class="success">Saved ✓ ${esc(f.title.value.trim())}${past ? '. Its start time has passed, so it’s in the “Past” section below.' : ''}</p>`;
   }));
 }
 
